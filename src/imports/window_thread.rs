@@ -12,9 +12,6 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-// Traits
-use winit::platform::wayland::WindowAttributesExtWayland; // Looks unused, but needed for '.with_name(...)' call!
-
 // Custom library imports
 use crate::imports;
 use imports::buffer_helpers::init_buffer_size;
@@ -92,17 +89,23 @@ impl WindowThread {
             self.shared_state
                 .send_to_writer(ChannelMessage::NewWindow(disp_wh, max_wh));
 
-            // Create & configure window
-            let window_attributes = Window::default_attributes()
-                .with_title("PixelPilfer")
-                .with_name("pixel_pilfer", "") // Sets app_id on wayland
+            // Configure window
+            #[allow(unused_mut)] // Avoids warning on non-linux systems
+            let mut window_attributes = Window::default_attributes()
+                .with_title("Pixel Pilfer")
                 .with_resizable(true)
-                .with_min_inner_size(winit::dpi::PhysicalSize::new(64, 64))
-                .with_max_inner_size(winit::dpi::PhysicalSize::new(max_wh.0, max_wh.1))
-                .with_inner_size(winit::dpi::PhysicalSize::new(disp_wh.0, disp_wh.1));
-            let window = event_loop.create_window(window_attributes).unwrap();
+                .with_min_inner_size(PhysicalSize::new(64, 64))
+                .with_max_inner_size(PhysicalSize::new(max_wh.0, max_wh.1))
+                .with_inner_size(PhysicalSize::new(disp_wh.0, disp_wh.1));
+            #[cfg(target_os = "linux")]
+            {
+                // Set app_id on wayland
+                use winit::platform::wayland::WindowAttributesExtWayland;
+                window_attributes = window_attributes.with_name("pixel_pilfer", "");
+            }
 
             // Set up rendering resources
+            let window = event_loop.create_window(window_attributes).unwrap();
             let ref_window = Arc::new(window);
             let context = Context::new(ref_window.clone()).unwrap();
             let mut surface = Surface::new(&context, ref_window.clone()).unwrap();

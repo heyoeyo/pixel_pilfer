@@ -32,7 +32,7 @@ pub struct CliArgs {
     #[arg(
         short = 'y',
         num_args=2,
-        value_names = ["OUTPUT_W", "OUTPUT_H (optional)"],
+        value_names = ["DISPLAY_W", "DISPLAY_H"],
         help = "The size of the initial display window in pixels",
     )]
     pub display_wh: Option<Vec<u32>>,

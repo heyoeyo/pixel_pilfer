@@ -384,7 +384,7 @@ impl Task {
         println!(
             "
 --------------------------
-Pixel Pilfer key controls:
+Key controls:
 --------------------------
 
 Load image: enter
