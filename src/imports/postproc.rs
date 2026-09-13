@@ -113,7 +113,16 @@ pub fn postprocess_source_image(source_image: &RGBAImageU8, config: &PostProcess
         imageops::colorops::huerotate_in_place(&mut new_src_buffer, config.hue_rotate);
     }
     if config.contrast != 0.0 {
-        imageops::colorops::contrast_in_place(&mut new_src_buffer, config.contrast);
+        if config.contrast > 0.0 {
+            imageops::colorops::contrast_in_place(&mut new_src_buffer, config.contrast);
+        } else {
+            // Negative contrast adjusts alpha! So restore original value after adjustment
+            let orig_alpha: Vec<u8> = new_src_buffer.pixels().map(|p| p[3]).collect();
+            imageops::colorops::contrast_in_place(&mut new_src_buffer, config.contrast);
+            for (idx, p) in new_src_buffer.pixels_mut().enumerate() {
+                p[3] = orig_alpha[idx];
+            }
+        }
     }
     if config.blur > 0 {
         new_src_buffer = normalized_blur(&new_src_buffer, config.blur);
