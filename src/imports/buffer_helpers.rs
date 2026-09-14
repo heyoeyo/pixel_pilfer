@@ -2,12 +2,11 @@ use crate::imports::types;
 use types::RGBAImageU8;
 
 // --------------------------------------------------------------------------------------------------------------------
-// Functions
 
-pub fn make_resize_buffer() -> RGBAImageU8 {
-    /* Helper to make (reasonable) max-sized buffer to be re-used for resizing */
-    RGBAImageU8::new(3840, 2160)
-}
+const BYTES_PER_PIXEL: usize = 4;
+
+// --------------------------------------------------------------------------------------------------------------------
+// Functions
 
 pub fn realloc_image_buffer(image_buffer: &mut RGBAImageU8, new_wh: (u32, u32)) -> bool {
     /*
@@ -19,7 +18,7 @@ pub fn realloc_image_buffer(image_buffer: &mut RGBAImageU8, new_wh: (u32, u32)) 
 
     // Handle re-allocating (if we need a bigger buffer) or re-using memory for smaller buffers
     let current_capacity = image_buffer.as_raw().capacity();
-    let required_capacity = (new_wh.0 * new_wh.1 * 4) as usize;
+    let required_capacity = (new_wh.0 * new_wh.1 * BYTES_PER_PIXEL as u32) as usize;
     let need_memory_allocation = required_capacity > current_capacity;
     if need_memory_allocation {
         *image_buffer = RGBAImageU8::new(new_wh.0, new_wh.1);
@@ -49,74 +48,102 @@ pub fn init_buffer_size(image_buffer: &mut RGBAImageU8, display_wh: (u32, u32), 
     realloc_image_buffer(image_buffer, display_wh);
 }
 
-pub fn resize_image(
-    input_image: &RGBAImageU8,
+pub fn resize_and_overlay(
     output_image: &mut RGBAImageU8,
+    input_image: &RGBAImageU8,
+    xy_position: (i32, i32),
     new_wh: (u32, u32),
     num_threads: Option<usize>,
 ) {
     /*
-    Faster (compared to image crate) nearest-neighbor resize implementation.
+    Helper function used to quickly resize and 'copy' one image onto another.
+    This is basically the same as doing:
+      let scaled_img = imageops::resize(input_image, width, height, 'nearest')
+      imageops::overlay(output_image, scaled_img, x, y);
 
-    Note this requires providing the output image, which this function will
-    also resize (in terms of memory allocation) to match the provided new_wh.
+    This version is *significantly* faster than the image crate implementations.
+    However, transparency (e.g. using a see-through input image) is not supported
     */
 
-    // Resize underlying image vector and get total working pixel count for spreading threaded workload
-    realloc_image_buffer(output_image, new_wh);
+    // For clarity
+    let (inp_w, inp_h) = (input_image.width() as usize, input_image.height() as usize);
     let (out_w, out_h) = (output_image.width() as usize, output_image.height() as usize);
-    let num_out_pixels = out_w * out_h;
+    let (x_pos, y_pos) = xy_position;
+    let (resize_w, resize_h) = (new_wh.0 as usize, new_wh.1 as usize);
 
-    // Figure out how many threads to use
+    // Figure out column indexing for output image
+    let out_x1 = x_pos.clamp(0, out_w as i32 - 1) as usize;
+    let out_x2 = (resize_w as i32 + x_pos).clamp(0, out_w as i32 - 1) as usize;
+    let num_columns_to_copy = out_x2.saturating_sub(out_x1);
+    if num_columns_to_copy == 0 {
+        return;
+    }
+
+    // Figure out row indexing for output image
+    let out_y1 = y_pos.clamp(0, out_h as i32 - 1) as usize;
+    let out_y2 = (resize_h as i32 + y_pos).clamp(0, out_h as i32 - 1) as usize;
+    let num_rows_to_copy = out_y2.saturating_sub(out_y1);
+    if num_rows_to_copy == 0 {
+        return;
+    }
+
+    // Pre-compute resized xy-indexing with byte/px & dimension scaling
+    // -> This is a significant optimization, but looks a bit mysterious
+    // -> We're just pre-computing which input-pixels to sample from, for every row/column of the resized image
+    // -> To make things more confusing, we're also working with 1D 'byte' indexing, not 2D pixels!
+    let (inp_max_w, inp_max_h) = ((inp_w - 1) as f32, (inp_h - 1) as f32);
+    let (rsz_max_w, rsz_max_h) = ((resize_w - 1) as f32, (resize_h - 1) as f32);
+    let (rsz_x1, rsz_y1) = (0.max(-x_pos) as usize, 0.max(-y_pos) as usize);
+    let full_x_pxidx: Vec<usize> = (rsz_x1..(rsz_x1 + num_columns_to_copy))
+        .map(|x| x as f32 / rsz_max_w)
+        .map(|xnorm| (xnorm * inp_max_w).round() as usize)
+        .map(|x_idx| x_idx * BYTES_PER_PIXEL)
+        .collect();
+    let full_y_pxidx: Vec<usize> = (rsz_y1..(rsz_x1 + num_rows_to_copy))
+        .map(|y| y as f32 / rsz_max_h)
+        .map(|ynorm| (ynorm * inp_max_h).round() as usize)
+        .map(|y_idx| y_idx * inp_w * BYTES_PER_PIXEL)
+        .collect();
+
+    // Figure out threading setup
     let n_threads = num_threads.unwrap_or({
         std::thread::available_parallelism()
-            .map(|n| n.get() / 2)
+            .map(|n| n.get())
             .unwrap_or(4)
-            .clamp(1, num_out_pixels)
+            .clamp(1, num_rows_to_copy)
     });
+    let rows_per_thread = (num_rows_to_copy as f32 / n_threads as f32).ceil() as usize;
+    let out_bytes_per_row = out_w * BYTES_PER_PIXEL;
+    let bytes_per_thread = out_bytes_per_row * rows_per_thread;
 
-    // Have threads working on entire rows!
-    // -> This lets us compute resizing slightly more efficiently by re-using indexing data
-    let rows_per_thread = (out_h as f32 / n_threads as f32).ceil() as usize;
-    let bytes_per_row = out_w * 4;
-    let bytes_per_thread = bytes_per_row * rows_per_thread;
+    // Extract segment of output image that we're actually going to change
+    // -> We need to grab the full row/column worth of pixels, not just the resized region
+    // -> We also pre-compute the boundaries of the segment of each row which is being written to
+    let (mut_idx_1, mut_idx_2) = (out_y1 * out_bytes_per_row, out_y2 * out_bytes_per_row);
+    let out_mut_segment: &mut [u8] = &mut output_image.as_mut()[mut_idx_1..mut_idx_2];
+    let (rowseg_idx_1, rowseg_idx_2) = (out_x1 * BYTES_PER_PIXEL, out_x2 * BYTES_PER_PIXEL);
 
-    // For convenience
-    let (inp_w, inp_h) = (input_image.width() as usize, input_image.height() as usize);
-    let (inp_max_w, inp_max_h) = ((inp_w - 1) as f32, (inp_h - 1) as f32);
-    let (out_max_w, out_max_h) = ((out_w - 1) as f32, (out_h - 1) as f32);
-
-    // Pre-compute resized xy-indexing with 4x byte & dimension scaling
-    let full_x_pxidx: Vec<usize> = (0..out_w)
-        .map(|x| x as f32 / out_max_w)
-        .map(|xnorm| (xnorm * inp_max_w).round() as usize)
-        .map(|x_idx| x_idx * 4)
-        .collect();
-    let full_y_pxidx: Vec<usize> = (0..out_h)
-        .map(|y| y as f32 / out_max_h)
-        .map(|ynorm| (ynorm * inp_max_h).round() as usize)
-        .map(|y_idx| y_idx * inp_w * 4)
-        .collect();
-
-    // Split image into groups of rows, handled by separate threads
+    // Resize and place pixels into output, using multiple threads
     let in_pixel_data = input_image.as_raw();
     std::thread::scope(|s| {
         // Split as groups of rows
-        for (thread_idx, thread_img_bytes) in output_image.chunks_mut(bytes_per_thread).enumerate() {
+        for (thread_idx, out_row_group_bytes) in out_mut_segment.chunks_mut(bytes_per_thread).enumerate() {
             let ypx_idxs = &full_y_pxidx;
             let xpx_idxs = &full_x_pxidx;
             s.spawn(move || {
-                let row_offset = rows_per_thread * thread_idx;
+                let thread_row_offset = rows_per_thread * thread_idx;
 
                 // Split groups of rows to individual rows
-                for (rel_row_idx, row_bytes) in thread_img_bytes.chunks_mut(bytes_per_row).enumerate() {
-                    let row_idx = row_offset + rel_row_idx;
+                for (seg_row_idx, out_row_bytes) in out_row_group_bytes.chunks_mut(out_bytes_per_row).enumerate() {
+                    let row_idx = seg_row_idx + thread_row_offset;
                     let new_y_pxidx = ypx_idxs[row_idx];
 
-                    // Split rows as per-column RGBA entry (e.g. 4 bytes)
-                    for (col_idx, col_bytes) in row_bytes.chunks_mut(4).enumerate() {
-                        let new_px_idx = new_y_pxidx + xpx_idxs[col_idx];
-                        col_bytes[0..4].copy_from_slice(&in_pixel_data[new_px_idx..new_px_idx + 4]);
+                    // Split rows as per-column RGBA entry
+                    let out_row_segment = &mut out_row_bytes[rowseg_idx_1..rowseg_idx_2];
+                    for (seg_col_idx, out_col_bytes) in out_row_segment.chunks_mut(BYTES_PER_PIXEL).enumerate() {
+                        let rsz_x1 = new_y_pxidx + xpx_idxs[seg_col_idx];
+                        let rsz_x2 = rsz_x1 + BYTES_PER_PIXEL;
+                        out_col_bytes[0..BYTES_PER_PIXEL].copy_from_slice(&in_pixel_data[rsz_x1..rsz_x2]);
                     }
                 }
             });

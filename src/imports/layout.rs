@@ -4,8 +4,7 @@
 
 pub struct DisplayRegion {
     /* Used to indicate placement/size of display data (for use with image-overlay/blitting) */
-    pub x: i64,
-    pub y: i64,
+    pub xy: (i32, i32),
     pub wh: (u32, u32),
 }
 
@@ -55,22 +54,19 @@ pub fn get_hstack_layout(
     let (x_anchor, y_anchor) = anchor.unwrap_or((0.5, 0.5));
     let pad_total_w = w_disp.saturating_sub(w_left_out + gap_size_px + w_right_out);
     let pad_total_h = h_disp.saturating_sub(h_combined_out);
-    let pad_left = (pad_total_w as f32 * x_anchor).round() as u32;
-    let pad_top = (pad_total_h as f32 * y_anchor).round() as u32;
+    let pad_left = (pad_total_w as f32 * x_anchor).round() as i32;
+    let pad_top = (pad_total_h as f32 * y_anchor).round() as i32;
 
     let left_layout = DisplayRegion {
-        x: pad_left as i64,
-        y: pad_top as i64,
+        xy: (pad_left, pad_top),
         wh: (w_left_out, h_combined_out),
     };
     let right_layout = DisplayRegion {
-        x: (pad_left + w_left_out + gap_size_px) as i64,
-        y: pad_top as i64,
+        xy: (pad_left + w_left_out as i32 + gap_size_px as i32, pad_top as i32),
         wh: (w_right_out, h_combined_out),
     };
     let outer_layout = DisplayRegion {
-        x: left_layout.x,
-        y: left_layout.y,
+        xy: left_layout.xy,
         wh: (left_layout.wh.0 + gap_size_px + right_layout.wh.0, left_layout.wh.1),
     };
 
@@ -99,12 +95,11 @@ pub fn get_solo_layout(display_wh: (u32, u32), solo_wh: (u32, u32), anchor: Opti
     let (x_anchor, y_anchor) = anchor.unwrap_or((0.5, 0.5));
     let pad_total_w = display_wh.0.saturating_sub(w_out);
     let pad_total_h = display_wh.1.saturating_sub(h_out);
-    let pad_left = (pad_total_w as f32 * x_anchor).round() as i64;
-    let pad_top = (pad_total_h as f32 * y_anchor).round() as i64;
+    let pad_left = (pad_total_w as f32 * x_anchor).round() as i32;
+    let pad_top = (pad_total_h as f32 * y_anchor).round() as i32;
 
     return DisplayRegion {
-        x: pad_left,
-        y: pad_top,
+        xy: (pad_left, pad_top),
         wh: (w_out, h_out),
     };
 }

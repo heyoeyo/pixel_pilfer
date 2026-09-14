@@ -14,8 +14,8 @@ use winit::keyboard::PhysicalKey::Code;
 
 // Custom library imports
 use crate::imports;
-use image::{ImageError, Rgba, imageops};
-use imports::buffer_helpers::{make_resize_buffer, realloc_image_buffer, resize_image};
+use image::{ImageError, Rgba};
+use imports::buffer_helpers::{realloc_image_buffer, resize_and_overlay};
 use imports::cli::CliArgs;
 use imports::colormaps::{make_cmap_inferno, make_colormap_lut};
 use imports::layout::{DisplayLayout, get_hstack_layout, get_solo_layout};
@@ -578,8 +578,6 @@ pub struct RenderData {
     disp_out_buffer: RGBAImageU8, // Buffer used for rendering output image
     disp_src_buffer: RGBAImageU8, // Buffer used for rendering source image (with overlay)
 
-    resize_buffer: RGBAImageU8, // Buffer used to temporarily store resized images
-
     thief_olay: ThiefOverlay,
     enable_olay: bool,
 
@@ -604,7 +602,6 @@ impl RenderData {
             post_proc_cfg: post_process_config,
             disp_out_buffer: empty_img.clone(),
             disp_src_buffer: empty_img.clone(),
-            resize_buffer: make_resize_buffer(),
             thief_olay: ThiefOverlay::new(make_cmap_inferno()),
             enable_olay: true,
             txtdraw: TextDrawer::new_regular(24.0),
@@ -688,6 +685,9 @@ impl RenderData {
     }
 
     pub fn render_display_images(&mut self, display_buffer: &mut RGBAImageU8, thief_data: &ThiefData) {
+        // Start a timer to keep track of total render time
+        let render_timer = Instant::now();
+
         // Render output image on it's own (at full resolution)
         let (src_w, src_h) = self.disp_src_buffer.dimensions();
         if self.roll_speed_xy.0 != 0.0 || self.roll_speed_xy.1 != 0.0 {
@@ -712,7 +712,6 @@ impl RenderData {
         display_buffer.fill(0);
 
         // Handle scaling (e.g. to fit window) image outputs for display
-        let render_timer = Instant::now();
         let pad_anchor = Some((0.5, 0.5));
         match self.layout_state {
             // In this case we show output & input side-by-side
@@ -739,8 +738,7 @@ impl RenderData {
 
                 // Scale each image and blit into output
                 for (olay, img) in std::iter::zip(overlay_items, hstack_imgs) {
-                    resize_image(&img, &mut self.resize_buffer, olay.wh, None);
-                    imageops::overlay(display_buffer, &self.resize_buffer, olay.x, olay.y);
+                    resize_and_overlay(display_buffer, &img, olay.xy, olay.wh, None);
                 }
 
                 if show_text {
@@ -752,7 +750,7 @@ impl RenderData {
                         UIControl::Hue => format!("Hue: {}", self.post_proc_cfg.hue_rotate),
                         UIControl::Roll => format!("Roll speed: {}, {}", self.roll_speed_xy.0, self.roll_speed_xy.1),
                     };
-                    let txt_y = outer_hstack.wh.1 + outer_hstack.y.max(0) as u32 + txt_pad;
+                    let txt_y = outer_hstack.wh.1 + outer_hstack.xy.1.max(0) as u32 + txt_pad;
                     self.txtdraw.xy_px(display_buffer, &disp_txt, (5, txt_y));
 
                     // Draw text to indicate source image sizing (helpful for roll settings)
@@ -774,15 +772,14 @@ impl RenderData {
                     self.disp_out_buffer.dimensions(),
                     pad_anchor,
                 );
-                resize_image(&self.disp_out_buffer, &mut self.resize_buffer, olay.wh, None);
-                imageops::overlay(display_buffer, &self.resize_buffer, olay.x, olay.y);
+                resize_and_overlay(display_buffer, &self.disp_out_buffer, olay.xy, olay.wh, None);
             }
         }
 
         // Draw top-left indicator showing time needed to draw frame
         if self.enable_render_timer {
-            let time_ms = render_timer.elapsed().as_micros();
-            let render_time_str = format!("{} us", time_ms);
+            let time_us = render_timer.elapsed().as_micros();
+            let render_time_str = format!("{} us", time_us);
             self.txtdraw.xy_px(display_buffer, &render_time_str, (5, 5));
         }
     }

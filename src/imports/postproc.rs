@@ -3,7 +3,7 @@ use rand::random_range;
 
 // Custom imports
 use crate::imports;
-use imports::buffer_helpers::resize_image;
+use imports::buffer_helpers::{realloc_image_buffer, resize_and_overlay};
 use imports::cli::CliArgs;
 use imports::types::RGBAImageU8;
 
@@ -191,5 +191,6 @@ pub fn prepare_sized_image_data(
     }
 
     // Resize input and store into output
-    resize_image(loaded_source_image, output_image, resize_wh, None);
+    realloc_image_buffer(output_image, resize_wh);
+    resize_and_overlay(output_image, loaded_source_image, (0, 0), resize_wh, None);
 }
