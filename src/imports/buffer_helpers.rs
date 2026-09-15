@@ -72,16 +72,16 @@ pub fn resize_and_overlay(
     let (resize_w, resize_h) = (new_wh.0 as usize, new_wh.1 as usize);
 
     // Figure out column indexing for output image
-    let out_x1 = x_pos.clamp(0, out_w as i32 - 1) as usize;
-    let out_x2 = (resize_w as i32 + x_pos).clamp(0, out_w as i32 - 1) as usize;
+    let out_x1 = x_pos.clamp(0, out_w as i32) as usize;
+    let out_x2 = (resize_w as i32 + x_pos).clamp(0, out_w as i32) as usize;
     let num_columns_to_copy = out_x2.saturating_sub(out_x1);
     if num_columns_to_copy == 0 {
         return;
     }
 
     // Figure out row indexing for output image
-    let out_y1 = y_pos.clamp(0, out_h as i32 - 1) as usize;
-    let out_y2 = (resize_h as i32 + y_pos).clamp(0, out_h as i32 - 1) as usize;
+    let out_y1 = y_pos.clamp(0, out_h as i32) as usize;
+    let out_y2 = (resize_h as i32 + y_pos).clamp(0, out_h as i32) as usize;
     let num_rows_to_copy = out_y2.saturating_sub(out_y1);
     if num_rows_to_copy == 0 {
         return;
