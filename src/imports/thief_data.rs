@@ -1,7 +1,5 @@
-use image::{Rgba, imageops};
-
 use crate::imports;
-use imports::state2d::{State2D, xy_from_index_u32};
+use imports::state2d::{State2D, xy_from_index, xy_from_index_u32};
 use imports::types::{Colormap, RGBAImageU8};
 
 // --------------------------------------------------------------------------------------------------------------------
@@ -16,7 +14,7 @@ pub struct ThiefData {
     mapping is display/pixel data itself.
     */
     pub thief_map: State2D<Option<usize>>,
-    pub order_map: State2D<Option<usize>>,
+    pub src_sample_order: Vec<usize>,
     iter_count: usize,
 }
 
@@ -24,21 +22,22 @@ impl ThiefData {
     pub fn new(out_wh: (usize, usize), src_wh: (usize, usize)) -> Self {
         Self {
             thief_map: State2D::new(None, out_wh.0, out_wh.1),
-            order_map: State2D::new(None, src_wh.0, src_wh.1),
+            src_sample_order: Vec::with_capacity(src_wh.0 * src_wh.1),
             iter_count: 0,
         }
     }
 
     pub fn clear(&mut self) -> &mut Self {
         self.thief_map.fill(None);
-        self.order_map.fill(None);
+        self.src_sample_order.clear();
         self.iter_count = 0;
         return self;
     }
 
     pub fn resize(&mut self, new_source_wh: (usize, usize), new_output_wh: (usize, usize)) -> &mut Self {
         self.thief_map.resize(new_output_wh.0, new_output_wh.1);
-        self.order_map.resize(new_source_wh.0, new_source_wh.1);
+        self.src_sample_order.resize(new_source_wh.0 * new_source_wh.1, 0);
+        self.src_sample_order.clear();
         return self;
     }
 
@@ -65,8 +64,8 @@ impl ThiefData {
         );
         self.thief_map.set_state(Some(source_point), output_point);
 
-        // Record ordering
-        self.order_map.set_state(Some(self.iter_count), source_point);
+        // Record sample ordering
+        self.src_sample_order.push(source_point);
         self.iter_count += 1;
     }
 
@@ -141,54 +140,54 @@ impl ThiefData {
 }
 
 pub struct ThiefOverlay {
-    /* This struct holds data used to visualize the sampling order used to steal pixels from the source image */
+    /* This struct helps visualize the sampling order used to steal pixels from the source image */
     cmap: Colormap,
-    overlay: RGBAImageU8,
-    has_semitransparency: bool,
+    last_iter_idx: usize,
 }
 
 impl ThiefOverlay {
     pub fn new(colormap: Colormap) -> Self {
         Self {
             cmap: colormap,
-            overlay: RGBAImageU8::new(0, 0),
-            has_semitransparency: colormap.iter().any(|p| p[3] < 255),
+            last_iter_idx: 0,
         }
     }
 
-    pub fn clear(&mut self) -> &mut Self {
-        self.overlay.fill(0);
-        return self;
+    pub fn clear(&mut self) {
+        self.last_iter_idx = 0;
     }
 
-    pub fn resize(&mut self, new_source_wh: (usize, usize)) {
-        self.overlay = RGBAImageU8::from_pixel(new_source_wh.0 as u32, new_source_wh.1 as u32, Rgba([0, 0, 0, 0]));
-    }
+    pub fn draw_overlay(
+        &mut self,
+        source_display_image: &mut RGBAImageU8,
+        source_sample_order: &Vec<usize>,
+        iteration_count: usize,
+    ) {
+        /*
+        Function used to draw a 'sampling order' overlay on top of the provided image,
+        which helps visualize how pixels are taken from the source image.
 
-    pub fn draw_overlay(&mut self, display_image: &mut RGBAImageU8, order_map: &State2D<Option<usize>>) {
-        let olay_wh = self.overlay.dimensions();
-        let ord_wh = (order_map.width, order_map.height);
-        assert!(
-            (olay_wh.0 == ord_wh.0 as u32) && (olay_wh.1 == ord_wh.1 as u32),
-            "Overlay error! Mismatched sizes ({:?} vs {:?})",
-            olay_wh,
-            ord_wh
-        );
+        For the sake of efficiency, this function does not re-draw the entire overlay
+        on every call, only the newest samples (since the last call).
+        Therefore the display image is expected to be re-used between calls
+        */
 
-        // Clear existing overlay if using transparent colormap (otherwise we'll 'build up' on re-draws)
-        if self.has_semitransparency {
-            self.overlay.fill(0);
+        // Set up scaling factors to map from sampling order to color map entries
+        let sample_scale = 1.0 / (source_sample_order.capacity() - 1) as f32;
+        let cmap_max_idx = (self.cmap.len() - 1) as f32;
+
+        // Draw new (since last call) samples colormapped by sample order, directly into the image
+        let mut sample_idx = self.last_iter_idx as f32;
+        let src_w = source_display_image.width() as usize;
+        for src_idx in &source_sample_order[self.last_iter_idx..] {
+            let idx_1024 = (sample_idx * sample_scale * cmap_max_idx).round() as usize;
+            let thief_color = self.cmap[idx_1024];
+            let (x, y) = xy_from_index(*src_idx, src_w);
+            source_display_image.put_pixel(x as u32, y as u32, thief_color);
+            sample_idx += 1.0;
         }
 
-        // Convert each order index value into a color from the colormap
-        let max_idx = (order_map.numel() - 1) as f32;
-        for (x, y, idx) in order_map.iter_xy() {
-            if let Some(idx) = *idx {
-                let idx_1024 = ((idx as f32 / max_idx) * 1023.0).round() as usize;
-                let thief_color = self.cmap[idx_1024];
-                self.overlay.put_pixel(x as u32, y as u32, thief_color);
-            }
-        }
-        imageops::overlay(display_image, &self.overlay, 0, 0);
+        // Record last index for next call (we skip previously drawn points)
+        self.last_iter_idx = iteration_count;
     }
 }

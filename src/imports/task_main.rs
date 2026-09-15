@@ -5,6 +5,7 @@ use std::time::{Duration, Instant, SystemTime};
 use rand::seq::{IteratorRandom, SliceRandom};
 use rand::{random_bool, random_range};
 
+use image::ImageError;
 use winit::keyboard::KeyCode::{
     ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, KeyB, KeyC, KeyD, KeyF, KeyG, KeyH, KeyK, KeyO, KeyP,
     KeyR, KeyS, KeyZ, Period, Space, Tab,
@@ -14,7 +15,6 @@ use winit::keyboard::PhysicalKey::Code;
 
 // Custom library imports
 use crate::imports;
-use image::{ImageError, Rgba};
 use imports::buffer_helpers::{realloc_image_buffer, resize_and_overlay};
 use imports::cli::CliArgs;
 use imports::colormaps::{make_cmap_inferno, make_colormap_lut};
@@ -459,7 +459,7 @@ impl WorkData {
 
     pub fn setup(&mut self, source_wh: (usize, usize)) -> &mut Self {
         // Resize visited states, if we see a change in the shared data
-        let (curr_src_w, curr_src_h) = self.thief_data.order_map.dimensions();
+        let (curr_src_w, curr_src_h) = self.thief_data.thief_map.dimensions();
         if curr_src_w != source_wh.0 || curr_src_h != source_wh.1 {
             self.src_wh = (source_wh.0, source_wh.1);
             self.src_visited.resize(source_wh.0, source_wh.1);
@@ -638,7 +638,6 @@ impl RenderData {
             self.base_src_buffer.width() as usize,
             self.base_src_buffer.height() as usize,
         );
-        self.thief_olay.resize(src_wh);
         self.clear();
         self.apply_post_processing();
 
@@ -646,8 +645,9 @@ impl RenderData {
     }
 
     pub fn clear(&mut self) {
-        self.thief_olay.clear();
+        self.disp_src_buffer = self.post_src_buffer.clone(); // Clears sampling overlay
         self.disp_out_buffer.fill(0);
+        self.thief_olay.clear();
     }
 
     pub fn set_text_display(&mut self, image_name: Option<&str>, active_control: Option<&UIControl>) {
@@ -662,6 +662,7 @@ impl RenderData {
     pub fn apply_post_processing(&mut self) -> &mut Self {
         self.post_src_buffer = postprocess_source_image(&self.base_src_buffer, &self.post_proc_cfg);
         self.disp_src_buffer = self.post_src_buffer.clone();
+        self.thief_olay.clear();
         return self;
     }
 
@@ -701,13 +702,6 @@ impl RenderData {
             None,
         );
 
-        // Render indicator over original image showing where pixels where taken from
-        self.disp_src_buffer = self.post_src_buffer.clone();
-        if self.enable_olay {
-            self.thief_olay
-                .draw_overlay(&mut self.disp_src_buffer, &thief_data.order_map);
-        }
-
         // Clear background
         display_buffer.fill(0);
 
@@ -716,6 +710,18 @@ impl RenderData {
         match self.layout_state {
             // In this case we show output & input side-by-side
             DisplayLayout::HStack | DisplayLayout::NoText => {
+                // Render indicator over original image showing where pixels where taken from
+                let disp_src_buffer = if self.enable_olay {
+                    self.thief_olay.draw_overlay(
+                        &mut self.disp_src_buffer,
+                        &thief_data.src_sample_order,
+                        thief_data.get_iter_count(),
+                    );
+                    &self.disp_src_buffer
+                } else {
+                    &self.post_src_buffer
+                };
+
                 // For clarity, define a small space for text outputs
                 let txt_pad = 5;
                 let show_text = self.layout_state != DisplayLayout::NoText;
@@ -727,11 +733,11 @@ impl RenderData {
                 };
 
                 // Figure out h-stack sizing/placement & draw into output
-                let hstack_imgs = [&self.disp_out_buffer, &self.disp_src_buffer];
+                let hstack_imgs = [&self.disp_out_buffer, &disp_src_buffer];
                 let (outer_hstack, overlay_items) = get_hstack_layout(
                     avail_wh,
                     self.disp_out_buffer.dimensions(),
-                    self.disp_src_buffer.dimensions(),
+                    disp_src_buffer.dimensions(),
                     8,
                     pad_anchor,
                 );
@@ -864,13 +870,13 @@ fn make_default_image(image_w: u32, image_h: u32) -> RGBAImageU8 {
 
     // Build simple gradient to use for making a default pattern
     let cmap = vec![
-        Rgba([5, 10, 25, 255]),
-        Rgba([0, 50, 50, 255]),
-        Rgba([10, 110, 95, 255]),
-        Rgba([40, 175, 100, 255]),
-        Rgba([90, 235, 75, 255]),
-        Rgba([130, 255, 90, 255]),
-        Rgba([0, 75, 90, 255]),
+        [5, 10, 25],
+        [0, 50, 50],
+        [10, 110, 95],
+        [40, 175, 100],
+        [90, 235, 75],
+        [130, 255, 90],
+        [0, 75, 90],
     ];
     let cmap = make_colormap_lut(&cmap);
     let max_cmap_idx = cmap.len() - 1;

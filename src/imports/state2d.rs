@@ -56,11 +56,7 @@ where
         return (self.width, self.height);
     }
 
-    pub fn numel(&self) -> usize {
-        /*  Get total number of elements in the grid */
-        return self.width * self.height;
-    }
-
+    #[allow(unused)]
     pub fn iter_xy(&self) -> impl Iterator<Item = (usize, usize, &T)> {
         /*  Meant to use in a for loop like: for (x_idx, y_idx, state_value) { ... } */
         self.state.iter().enumerate().map(|(idx, item)| {
