@@ -88,6 +88,7 @@ impl Task {
             init_out_xy,
             init_src_xy,
             !args.disable_full_search,
+            args.enable_galvanized_mode,
             num_px_steal.max(1.0).round() as usize,
         );
         work_data.setup(src_wh);
@@ -422,6 +423,7 @@ pub struct WorkData {
     pub out_wh: (usize, usize),
     pub is_done: bool,
     enable_full_search: bool,
+    enable_galvanized_mode: bool,
     num_steal_per_iter: usize,
     out_visited: Visited2D,
     src_visited: Visited2D,
@@ -438,6 +440,7 @@ impl WorkData {
         initial_output_sample_xy_norm: Option<(f32, f32)>,
         initial_source_sample_xy_norm: Option<(f32, f32)>,
         enable_full_search: bool,
+        enable_galvanized_mode: bool,
         initial_num_pixel_steal: usize,
     ) -> Self {
         let init_src_wh = (0, 0);
@@ -445,12 +448,13 @@ impl WorkData {
             out_wh: output_wh,
             src_wh: init_src_wh,
             enable_full_search: enable_full_search,
+            enable_galvanized_mode: enable_galvanized_mode,
             num_steal_per_iter: initial_num_pixel_steal.max(1),
             is_done: false,
             out_visited: Visited2D::new(output_wh),
             src_visited: Visited2D::new(init_src_wh),
             bfs_visited: Visited2D::new(init_src_wh),
-            uv_out_nbs: Vec::new(),
+            uv_out_nbs: Vec::with_capacity(output_wh.0.max(output_wh.1) * 6), // Roughly: 2*pi*max_radius * 2
             thief_data: ThiefData::new(output_wh, init_src_wh),
             init_out_sample: initial_output_sample_xy_norm,
             init_src_sample: initial_source_sample_xy_norm,
@@ -496,13 +500,7 @@ impl WorkData {
             let src_y_px = src_sample_xy.1.clamp(0.0, 1.0) * (self.src_wh.1.saturating_sub(1) as f32);
             init_src_sample = index_from_xy(src_x_px.round() as usize, src_y_px.round() as usize, self.src_wh.0);
         }
-
-        // Record initial sampling locations
-        self.thief_data.record_mapping(init_out_sample, init_src_sample);
-        self.src_visited.set_visited(init_src_sample);
-        self.out_visited.set_visited(init_out_sample);
-        self.uv_out_nbs
-            .append(&mut self.out_visited.get_neighbours_unvisited(init_out_sample));
+        self.record_samples(init_out_sample, init_src_sample);
 
         return self;
     }
@@ -523,13 +521,18 @@ impl WorkData {
             }
 
             // Stop if we have no more pixels to draw
-            if self.uv_out_nbs.len() == 0 {
+            let num_pts = self.uv_out_nbs.len();
+            if num_pts == 0 {
                 self.is_done = true;
                 break;
             }
 
             // Randomly choose an unvisited output point from neighbors
-            let rand_uv_onb_idx = random_range(0..self.uv_out_nbs.len());
+            let rand_uv_onb_idx: usize = if self.enable_galvanized_mode {
+                random_range((num_pts.saturating_sub(3))..num_pts)
+            } else {
+                random_range(0..self.uv_out_nbs.len())
+            };
             let next_out_sample = self.uv_out_nbs.swap_remove(rand_uv_onb_idx);
 
             // Get all visited src points associated with chosen output (we want nearest src neighbour as next point)
@@ -538,8 +541,8 @@ impl WorkData {
                 .iter()
                 .map(|pt| self.thief_data.read(*pt).unwrap())
                 .collect();
-            debug_assert!(visited_out_nbs.len() == 0, "No visited nbs around out-sample point!");
-            debug_assert!(visited_src_pts.len() == 0, "No visited source points!");
+            debug_assert!(visited_out_nbs.len() > 0, "No visited nbs around out-sample point!");
+            debug_assert!(visited_src_pts.len() > 0, "No visited source points!");
 
             // Try to sample the next source point for coloring in the sampled output point
             let mut try_next_src_sample = sample_source_point_nb(&visited_src_pts, &mut self.src_visited);
@@ -550,15 +553,20 @@ impl WorkData {
 
             // Record src->out mapping and mark pixels as visited
             if let Some(next_src_sample) = try_next_src_sample {
-                self.thief_data.record_mapping(next_out_sample, next_src_sample);
-                self.out_visited.set_visited(next_out_sample);
-                self.src_visited.set_visited(next_src_sample);
-                self.uv_out_nbs
-                    .append(&mut self.out_visited.get_neighbours_unsearched(next_out_sample));
-            };
+                self.record_samples(next_out_sample, next_src_sample);
+            }
         }
 
         return self.is_done;
+    }
+
+    #[inline]
+    fn record_samples(&mut self, output_sample: usize, source_sample: usize) {
+        self.thief_data.record_mapping(output_sample, source_sample);
+        self.src_visited.set_visited(source_sample);
+        self.out_visited.set_visited(output_sample);
+        self.uv_out_nbs
+            .append(&mut self.out_visited.get_neighbours_unsearched(output_sample));
     }
 }
 

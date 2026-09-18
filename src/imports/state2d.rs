@@ -109,15 +109,19 @@ impl Visited2D {
     }
 
     pub fn get_neighbours_visited(&self, point_index: pidx) -> Vec<pidx> {
-        self._get_4way_steps(point_index)
-            .into_iter()
-            .filter(|pt| self.is_visited(*pt))
-            .collect()
+        let mut vv_nbs = Vec::<pidx>::with_capacity(4);
+        for nb_pt in self._get_4way_steps(point_index) {
+            if self.is_visited(nb_pt) && nb_pt != point_index {
+                vv_nbs.push(nb_pt);
+            }
+        }
+        return vv_nbs;
     }
+
     pub fn get_neighbours_unvisited(&mut self, point_index: pidx) -> Vec<pidx> {
         let mut uv_nbs = Vec::<pidx>::with_capacity(4);
         for nb_pt in self._get_4way_steps(point_index) {
-            if !self.is_visited(nb_pt) {
+            if !self.is_visited(nb_pt) && nb_pt != point_index {
                 uv_nbs.push(nb_pt);
             }
         }
@@ -127,7 +131,7 @@ impl Visited2D {
     pub fn get_neighbours_unsearched(&mut self, point_index: pidx) -> Vec<pidx> {
         let mut uv_nbs = Vec::<pidx>::with_capacity(4);
         for nb_pt in self._get_4way_steps(point_index) {
-            if !self.is_searched(nb_pt) {
+            if !self.is_searched(nb_pt) && nb_pt != point_index {
                 uv_nbs.push(nb_pt);
                 self.visited.set_state(VisitState::Searched, nb_pt);
             }

@@ -60,7 +60,7 @@ impl ThiefData {
         */
         debug_assert!(
             self.thief_map.read(output_point).is_none(),
-            "Error: Attempting to set an already set output point!"
+            "Error: Attempting to set an already set output point! ({output_point})"
         );
         self.thief_map.set_state(Some(source_point), output_point);
 

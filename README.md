@@ -3,7 +3,7 @@
 This project was made to learn & experiment with [Rust](https://rust-lang.org/).
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/babc6382-f175-4274-8bf7-71e4bdc2e423" width=640 height=360 alt="Pixel pilfer acting on an image of the 'Crab Nebula'">
+  <img src="https://github.com/user-attachments/assets/babc6382-f175-4274-8bf7-71e4bdc2e423" width=640 height=360 style="image-rendering: pixelated;" alt="Pixel pilfer acting on an image of the 'Crab Nebula'">
 </p>
 
 It's based on a youtube video about a 'generalized rainbow smoke algorithm' by [Generative Garden](https://www.youtube.com/watch?v=dVQDYne8Bkc).

@@ -100,6 +100,13 @@ pub struct CliArgs {
     pub disable_full_search: bool,
 
     #[arg(
+        short = 'g',
+        long = "galvanized",
+        help = "If enabled, output points are preferentially sampled near previous sample points (can be slow)"
+    )]
+    pub enable_galvanized_mode: bool,
+
+    #[arg(
         short = 't',
         long = "time_sec",
         default_value_t = 8.0,
