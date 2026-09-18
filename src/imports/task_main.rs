@@ -88,6 +88,7 @@ impl Task {
             init_out_xy,
             init_src_xy,
             !args.disable_full_search,
+            args.debug_profiling,
             args.enable_galvanized_mode,
             num_px_steal.max(1.0).round() as usize,
         );
@@ -423,6 +424,7 @@ pub struct WorkData {
     pub out_wh: (usize, usize),
     pub is_done: bool,
     enable_full_search: bool,
+    enable_profile_mode: bool,
     enable_galvanized_mode: bool,
     num_steal_per_iter: usize,
     out_visited: Visited2D,
@@ -440,6 +442,7 @@ impl WorkData {
         initial_output_sample_xy_norm: Option<(f32, f32)>,
         initial_source_sample_xy_norm: Option<(f32, f32)>,
         enable_full_search: bool,
+        enable_profile_mode: bool,
         enable_galvanized_mode: bool,
         initial_num_pixel_steal: usize,
     ) -> Self {
@@ -448,6 +451,7 @@ impl WorkData {
             out_wh: output_wh,
             src_wh: init_src_wh,
             enable_full_search: enable_full_search,
+            enable_profile_mode: enable_profile_mode,
             enable_galvanized_mode: enable_galvanized_mode,
             num_steal_per_iter: initial_num_pixel_steal.max(1),
             is_done: false,
@@ -512,11 +516,18 @@ impl WorkData {
         Returns: is_done
         */
 
+        // Feedback for blank screen & make sure we take all pixels
+        if self.enable_profile_mode {
+            self.num_steal_per_iter = self.out_wh.0 * self.out_wh.1;
+            println!("");
+            println!("Beginning work...");
+        }
+
         // Iterate over all pixels if we're not given a max count
         let timer = Instant::now();
         for _ in 0..self.num_steal_per_iter {
             // Stop if we ever run for too long (ensures we update the display regularly)
-            if timer.elapsed() > max_duration {
+            if timer.elapsed() > max_duration && !self.enable_profile_mode {
                 break;
             }
 
@@ -524,6 +535,9 @@ impl WorkData {
             let num_pts = self.uv_out_nbs.len();
             if num_pts == 0 {
                 self.is_done = true;
+                if self.enable_profile_mode {
+                    println!("-> Took {} ms", timer.elapsed().as_millis());
+                }
                 break;
             }
 

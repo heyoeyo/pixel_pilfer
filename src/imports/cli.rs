@@ -107,6 +107,12 @@ pub struct CliArgs {
     pub enable_galvanized_mode: bool,
 
     #[arg(
+        long = "debug_profiling",
+        help = "Compute full mapping without render updates and print timing. Used for debugging/profiling"
+    )]
+    pub debug_profiling: bool,
+
+    #[arg(
         short = 't',
         long = "time_sec",
         default_value_t = 8.0,
