@@ -64,6 +64,11 @@ where
             (x, y, item)
         })
     }
+
+    #[allow(unused)]
+    pub fn iter_1d(&self) -> impl Iterator<Item = &T> {
+        return self.state.iter();
+    }
 }
 
 // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
@@ -94,6 +99,11 @@ impl Visited2D {
     pub fn clear(&mut self) -> &mut Self {
         self.visited.fill(VisitState::Unvisited);
         return self;
+    }
+
+    #[allow(unused)]
+    pub fn dimensions(&self) -> (usize, usize) {
+        return self.visited.dimensions();
     }
 
     pub fn set_visited(&mut self, point_index: pidx) {
@@ -150,6 +160,39 @@ impl Visited2D {
         // Up, left, right, down
         return [(x_mid, y1), (x1, y_mid), (x2, y_mid), (x_mid, y2)]
             .map(|(x, y)| index_from_xy(x, y, self.visited.width));
+    }
+
+    #[allow(unused)]
+    pub fn debug_get_total_visited(&self) -> usize {
+        let mut count: usize = 0;
+        for pt in self.visited.iter_1d() {
+            if *pt == VisitState::Visited {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    #[allow(unused)]
+    pub fn debug_get_total_searched(&self) -> usize {
+        let mut count: usize = 0;
+        for pt in self.visited.iter_1d() {
+            if *pt != VisitState::Unvisited {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    #[allow(unused)]
+    pub fn debug_get_total_unsearched(&self) -> usize {
+        let mut count: usize = 0;
+        for pt in self.visited.iter_1d() {
+            if !(*pt == VisitState::Searched || *pt == VisitState::Visited) {
+                count += 1;
+            }
+        }
+        return count;
     }
 }
 
