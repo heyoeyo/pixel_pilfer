@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
-use rand::seq::{IteratorRandom, SliceRandom};
+use rand::seq::IteratorRandom;
 use rand::{random_bool, random_range};
 
 use image::ImageError;
@@ -15,6 +15,7 @@ use winit::keyboard::PhysicalKey::Code;
 
 // Custom library imports
 use crate::imports;
+use imports::accel_source_search::SourceSearch;
 use imports::buffer_helpers::{realloc_image_buffer, resize_and_overlay};
 use imports::cli::CliArgs;
 use imports::colormaps::{make_cmap_inferno, make_colormap_lut};
@@ -429,8 +430,8 @@ pub struct WorkData {
     num_steal_per_iter: usize,
     out_visited: Visited2D,
     src_visited: Visited2D,
-    bfs_visited: Visited2D,
     uv_out_nbs: Vec<usize>,
+    src_accel_search: SourceSearch,
     pub thief_data: ThiefData,
     init_out_sample: Option<(f32, f32)>,
     init_src_sample: Option<(f32, f32)>,
@@ -457,8 +458,8 @@ impl WorkData {
             is_done: false,
             out_visited: Visited2D::new(output_wh),
             src_visited: Visited2D::new(init_src_wh),
-            bfs_visited: Visited2D::new(init_src_wh),
             uv_out_nbs: Vec::with_capacity(output_wh.0.max(output_wh.1) * 6), // Roughly: 2*pi*max_radius * 2
+            src_accel_search: SourceSearch::new(if enable_galvanized_mode { 64 } else { 16 }),
             thief_data: ThiefData::new(output_wh, init_src_wh),
             init_out_sample: initial_output_sample_xy_norm,
             init_src_sample: initial_source_sample_xy_norm,
@@ -471,7 +472,7 @@ impl WorkData {
         if curr_src_w != source_wh.0 || curr_src_h != source_wh.1 {
             self.src_wh = (source_wh.0, source_wh.1);
             self.src_visited.resize(source_wh.0, source_wh.1);
-            self.bfs_visited.resize(source_wh.0, source_wh.1);
+            self.src_accel_search.resize(source_wh);
         }
         self.thief_data.resize(self.src_wh, self.out_wh);
 
@@ -486,8 +487,8 @@ impl WorkData {
         self.thief_data.clear();
         self.out_visited.clear();
         self.src_visited.clear();
-        self.bfs_visited.clear();
         self.uv_out_nbs.clear();
+        self.src_accel_search.clear();
         self.is_done = false;
 
         // Pick sample points
@@ -559,11 +560,11 @@ impl WorkData {
             debug_assert!(visited_src_pts.len() > 0, "No visited source points!");
 
             // Try to sample the next source point for coloring in the sampled output point
-            let mut try_next_src_sample = sample_source_point_nb(&visited_src_pts, &mut self.src_visited);
-            if try_next_src_sample.is_none() && self.enable_full_search {
-                try_next_src_sample =
-                    sample_source_point_bfs(visited_src_pts, &mut self.src_visited, &mut self.bfs_visited);
-            }
+            let try_next_src_sample = if self.enable_full_search {
+                self.src_accel_search.get_nearest_point(&visited_src_pts)
+            } else {
+                sample_source_point_nb(&visited_src_pts, &mut self.src_visited)
+            };
 
             // Record src->out mapping and mark pixels as visited
             if let Some(next_src_sample) = try_next_src_sample {
@@ -577,10 +578,14 @@ impl WorkData {
     #[inline]
     fn record_samples(&mut self, output_sample: usize, source_sample: usize) {
         self.thief_data.record_mapping(output_sample, source_sample);
-        self.src_visited.set_visited(source_sample);
+
         self.out_visited.set_visited(output_sample);
         self.uv_out_nbs
             .append(&mut self.out_visited.get_neighbours_unsearched(output_sample));
+
+        self.src_visited.set_visited(source_sample);
+        self.src_accel_search
+            .add_search_points(&self.src_visited.get_neighbours_unsearched(source_sample));
     }
 }
 
@@ -830,61 +835,6 @@ fn sample_source_point_nb(visited_src_points: &Vec<usize>, src_visited: &mut Vis
     // Randomly pick one of the unvisited neighbors as the sample point
     // -> This can fail as it's fairly common that we have no neighbors remaining!
     return uv_src_nbs_iter.choose(&mut rand::rng());
-}
-
-fn sample_source_point_bfs(
-    visited_src_points: Vec<usize>,
-    src_visited: &mut Visited2D,
-    bfs_search_visited: &mut Visited2D,
-) -> Option<usize> {
-    /*
-    Function used to search for a nearest unvisited source sample point.
-    This is only meant to be called if we can't find an immediate neighbor
-    point to use.
-
-    This works by searching each of the neighbors around the visited
-    source points in a breadth-first-search manner. If no unvisited
-    point is found among the neighbors, the we repeat by checking the
-    neighbors of the neighbors etc.
-
-    This search can fail when there are no more source points to sample
-    from, though this should only happen if we 'undersize' the source
-    image (e.g. it has fewer pixels than the output).
-
-    It would be nice to accelerate this search, maybe by keeping a count
-    of how many points are left to sample from (e.g. on a low-res grid)...?
-    Would allow us to speed up search when there are no nearby points left.
-    */
-
-    // Set up new search map for finding closest unvisited src nb
-    bfs_search_visited.clear();
-    for pt in visited_src_points.iter() {
-        bfs_search_visited.set_visited(*pt);
-    }
-
-    // Repeatedly do breadth-first-search of neighbouring source points until we find an unvisited point
-    let mut points_to_check: Vec<usize> = visited_src_points;
-    while points_to_check.len() > 0 {
-        let mut new_points_to_check: Vec<usize> = Vec::with_capacity(points_to_check.len() * 4);
-        for pt in points_to_check.iter().copied() {
-            let mut bfs_nbs = bfs_search_visited.get_neighbours_unsearched(pt);
-            bfs_nbs.shuffle(&mut rand::rng());
-            for search_nb in bfs_nbs {
-                // Stop if we find an unvisited src point (considered 'close' to influence points)
-                if !src_visited.is_visited(search_nb) {
-                    return Some(search_nb);
-                }
-
-                // If point isn't unvisited, mark as searched and record for next round of checks
-                new_points_to_check.push(search_nb);
-            }
-        }
-
-        // Update points to check with newly found points
-        points_to_check = new_points_to_check;
-    }
-
-    return None;
 }
 
 fn make_default_image(image_w: u32, image_h: u32) -> RGBAImageU8 {
