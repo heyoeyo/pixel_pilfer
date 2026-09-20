@@ -8,7 +8,7 @@ use rand::{random_bool, random_range};
 use image::ImageError;
 use winit::keyboard::KeyCode::{
     ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, KeyB, KeyC, KeyD, KeyF, KeyG, KeyH, KeyK, KeyO, KeyP,
-    KeyR, KeyS, KeyZ, Period, Space, Tab,
+    KeyR, KeyS, KeyV, KeyZ, Period, Space, Tab,
 };
 use winit::keyboard::PhysicalKey;
 use winit::keyboard::PhysicalKey::Code;
@@ -247,16 +247,22 @@ impl Task {
                 self.request_one_rerender = true;
             }
 
-            // Reset roll state
+            // Toggle render time indicator
             Code(KeyF) => {
                 self.render.enable_render_timer = !self.render.enable_render_timer;
                 self.request_one_rerender = true;
             }
 
-            // Reset roll state
+            // Toggle grayscale image
             Code(KeyG) => {
                 self.render.post_proc_cfg.is_grayscale = !self.render.post_proc_cfg.is_grayscale;
                 self.render.apply_post_processing();
+                self.request_one_rerender = true;
+            }
+
+            // Toggle galvanize
+            Code(KeyV) => {
+                self.data.enable_galvanized_mode = !self.data.enable_galvanized_mode;
                 self.request_one_rerender = true;
             }
 
