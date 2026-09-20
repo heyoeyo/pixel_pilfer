@@ -82,12 +82,14 @@ enum VisitState {
 
 pub struct Visited2D {
     visited: State2D<VisitState>,
+    _cache_nb: Vec<pidx>,
 }
 
 impl Visited2D {
     pub fn new(size_wh: (usize, usize)) -> Self {
         Self {
             visited: State2D::new(VisitState::Unvisited, size_wh.0, size_wh.1),
+            _cache_nb: Vec::with_capacity(4),
         }
     }
 
@@ -118,35 +120,35 @@ impl Visited2D {
         return self.visited.read(point_index) != VisitState::Unvisited;
     }
 
-    pub fn get_neighbours_visited(&self, point_index: pidx) -> Vec<pidx> {
-        let mut vv_nbs = Vec::<pidx>::with_capacity(4);
+    pub fn get_neighbours_visited(&mut self, point_index: pidx) -> &Vec<pidx> {
+        self._cache_nb.clear();
         for nb_pt in self._get_4way_steps(point_index) {
             if self.is_visited(nb_pt) && nb_pt != point_index {
-                vv_nbs.push(nb_pt);
+                self._cache_nb.push(nb_pt);
             }
         }
-        return vv_nbs;
+        return &self._cache_nb;
     }
 
-    pub fn get_neighbours_unvisited(&mut self, point_index: pidx) -> Vec<pidx> {
-        let mut uv_nbs = Vec::<pidx>::with_capacity(4);
+    pub fn get_neighbours_unvisited(&mut self, point_index: pidx) -> &Vec<pidx> {
+        self._cache_nb.clear();
         for nb_pt in self._get_4way_steps(point_index) {
             if !self.is_visited(nb_pt) && nb_pt != point_index {
-                uv_nbs.push(nb_pt);
+                self._cache_nb.push(nb_pt);
             }
         }
-        return uv_nbs;
+        return &self._cache_nb;
     }
 
-    pub fn get_neighbours_unsearched(&mut self, point_index: pidx) -> Vec<pidx> {
-        let mut uv_nbs = Vec::<pidx>::with_capacity(4);
+    pub fn get_neighbours_unsearched(&mut self, point_index: pidx) -> &Vec<pidx> {
+        self._cache_nb.clear();
         for nb_pt in self._get_4way_steps(point_index) {
             if !self.is_searched(nb_pt) && nb_pt != point_index {
-                uv_nbs.push(nb_pt);
+                self._cache_nb.push(nb_pt);
                 self.visited.set_state(VisitState::Searched, nb_pt);
             }
         }
-        return uv_nbs;
+        return &self._cache_nb;
     }
 
     fn _get_4way_steps(&self, point_index: pidx) -> [pidx; 4] {

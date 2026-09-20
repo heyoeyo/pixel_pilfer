@@ -22,6 +22,8 @@ pub struct SourceSearch {
     grid_wh: (usize, usize),
     uv_pts_grid: Vec<Vec<(usize, usize)>>,
     nearest_search_patterns: Vec<Vec<(i32, i32)>>,
+    _cache_src_pxy_gxy: Vec<((usize, usize), (i32, i32))>,
+    _cache_best_grid_cell_idxs: Vec<(usize, usize)>,
 }
 
 impl SourceSearch {
@@ -32,6 +34,8 @@ impl SourceSearch {
             grid_wh: (0, 0),
             uv_pts_grid: Vec::new(),
             nearest_search_patterns: Vec::new(),
+            _cache_src_pxy_gxy: Vec::with_capacity(4),
+            _cache_best_grid_cell_idxs: Vec::with_capacity(128),
         };
     }
 
@@ -88,23 +92,18 @@ impl SourceSearch {
             up with a quadtree-like structure in the future if needed...
         */
 
-        // Initialize 'best' checks for re-use
-        let mut best_grid_and_cell_idxs: Vec<(usize, usize)> = Vec::with_capacity(128);
-        let mut best_nearest_dist = usize::MAX;
-
-        // Pre-compute the grid cell location of the given source points
-        let src_pxy_gxy: Vec<((usize, usize), (i32, i32))> = source_points
-            .iter()
-            .map(|pxidx| {
-                let src_px_xy = xy_from_index(*pxidx, self.src_wh.0);
-                let src_grid_x = (src_px_xy.0 / self.cell_side_length) as i32;
-                let src_grid_y = (src_px_xy.1 / self.cell_side_length) as i32;
-                let src_grid_xy = (src_grid_x, src_grid_y);
-                (src_px_xy, src_grid_xy)
-            })
-            .collect();
+        // Pre-compute the xy grid cell location of the given source points
+        self._cache_src_pxy_gxy.clear();
+        self._cache_src_pxy_gxy.extend(source_points.iter().map(|pxidx| {
+            let src_px_xy = xy_from_index(*pxidx, self.src_wh.0);
+            let src_grid_x = (src_px_xy.0 / self.cell_side_length) as i32;
+            let src_grid_y = (src_px_xy.1 / self.cell_side_length) as i32;
+            let src_grid_xy = (src_grid_x, src_grid_y);
+            (src_px_xy, src_grid_xy)
+        }));
 
         // Loop over pre-defined sets of search patterns (in the form of relative offsets from current position)
+        let mut best_nearest_dist = usize::MAX;
         let mut first_src_check_idx = 0;
         let num_src_pts = source_points.len();
         for dxdys_per_radius in &self.nearest_search_patterns {
@@ -112,10 +111,11 @@ impl SourceSearch {
             // -> Change first checked point each time to reduce bias
             first_src_check_idx = (first_src_check_idx + 1) % num_src_pts;
             for check_idx_offset in 0..num_src_pts {
-                let (src_px_xy, src_grid_xy) = src_pxy_gxy[(first_src_check_idx + check_idx_offset) % num_src_pts];
+                let (src_px_xy, src_grid_xy) =
+                    self._cache_src_pxy_gxy[(first_src_check_idx + check_idx_offset) % num_src_pts];
 
                 // Search nearby (based on dx, dy offsets) grid cells for points
-                best_grid_and_cell_idxs.clear();
+                self._cache_best_grid_cell_idxs.clear();
                 for (dx, dy) in dxdys_per_radius {
                     // Skip cells that land outside of the grid
                     let offset_grid_x: i32 = src_grid_xy.0 + dx;
@@ -135,24 +135,24 @@ impl SourceSearch {
                         let (nearest_cell_idx, nearest_dist) = self.search_grid_cell(active_cell, src_px_xy);
                         if nearest_dist <= best_nearest_dist {
                             if nearest_dist < best_nearest_dist {
-                                best_grid_and_cell_idxs.clear();
+                                self._cache_best_grid_cell_idxs.clear();
                             }
                             best_nearest_dist = nearest_dist;
-                            best_grid_and_cell_idxs.push((grid_idx, nearest_cell_idx));
+                            self._cache_best_grid_cell_idxs.push((grid_idx, nearest_cell_idx));
                         }
                     }
                 }
 
                 // If we got 1 or more 'closest' points, take one randomly as final output
-                let num_best = best_grid_and_cell_idxs.len();
+                let num_best = self._cache_best_grid_cell_idxs.len();
                 if num_best > 0 {
-                    let (best_gidx, best_cidx) = best_grid_and_cell_idxs[random_range(0..num_best)];
+                    let (best_gidx, best_cidx) = self._cache_best_grid_cell_idxs[random_range(0..num_best)];
                     let nearest_xy = self.uv_pts_grid[best_gidx].swap_remove(best_cidx);
                     let nearest_pxidx = index_from_xy(nearest_xy.0, nearest_xy.1, self.src_wh.0);
                     return Some(nearest_pxidx);
                 }
-            }
-        }
+            } // End of src-point loop
+        } // End of dxdy_radius loop
 
         // This shouldn't happen normally, if we get here, it means we checked all grid cells and
         // didn't find a single point! Probably means something went wrong with point recording

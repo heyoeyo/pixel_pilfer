@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
-use rand::seq::IteratorRandom;
+use rand::seq::IndexedRandom;
 use rand::{random_bool, random_range};
 
 use image::ImageError;
@@ -530,6 +530,11 @@ impl WorkData {
             println!("Beginning work...");
         }
 
+        // Set up re-usable memory for dynamic neighbor data
+        let mut cache_visited_src_pts: Vec<usize> = Vec::with_capacity(4);
+        let mut cache_uv_src_nb_pts: Vec<usize> = Vec::with_capacity(4 * 4); // 'unvisited source neighbor points'
+        let mut rng = rand::rng();
+
         // Iterate over all pixels if we're not given a max count
         let timer = Instant::now();
         for _ in 0..self.num_steal_per_iter {
@@ -557,19 +562,23 @@ impl WorkData {
             let next_out_sample = self.uv_out_nbs.swap_remove(rand_uv_onb_idx);
 
             // Get all visited src points associated with chosen output (we want nearest src neighbour as next point)
+            cache_visited_src_pts.clear();
             let visited_out_nbs = self.out_visited.get_neighbours_visited(next_out_sample);
-            let visited_src_pts: Vec<usize> = visited_out_nbs
-                .iter()
-                .map(|pt| self.thief_data.read(*pt).unwrap())
-                .collect();
+            cache_visited_src_pts.extend(visited_out_nbs.iter().map(|pt| self.thief_data.read(*pt).unwrap()));
             debug_assert!(visited_out_nbs.len() > 0, "No visited nbs around out-sample point!");
-            debug_assert!(visited_src_pts.len() > 0, "No visited source points!");
+            debug_assert!(cache_visited_src_pts.len() > 0, "No visited source points!");
 
             // Try to sample the next source point for coloring in the sampled output point
             let try_next_src_sample = if self.enable_full_search {
-                self.src_accel_search.get_nearest_point(&visited_src_pts)
+                self.src_accel_search.get_nearest_point(&cache_visited_src_pts)
             } else {
-                sample_source_point_nb(&visited_src_pts, &mut self.src_visited)
+                // Get all neighbors of visited source points and point one randomly
+                // -> This can fail if all neighbors are already taken
+                cache_uv_src_nb_pts.clear();
+                for pt in &cache_visited_src_pts {
+                    cache_uv_src_nb_pts.extend(self.src_visited.get_neighbours_unvisited(*pt));
+                }
+                cache_uv_src_nb_pts.choose(&mut rng).copied()
             };
 
             // Record src->out mapping and mark pixels as visited
@@ -587,11 +596,11 @@ impl WorkData {
 
         self.out_visited.set_visited(output_sample);
         self.uv_out_nbs
-            .append(&mut self.out_visited.get_neighbours_unsearched(output_sample));
+            .extend(self.out_visited.get_neighbours_unsearched(output_sample));
 
         self.src_visited.set_visited(source_sample);
         self.src_accel_search
-            .add_search_points(&self.src_visited.get_neighbours_unsearched(source_sample));
+            .add_search_points(self.src_visited.get_neighbours_unsearched(source_sample));
     }
 }
 
@@ -822,25 +831,6 @@ impl RenderData {
             self.txtdraw.xy_px(display_buffer, &render_time_str, (5, 5));
         }
     }
-}
-
-fn sample_source_point_nb(visited_src_points: &Vec<usize>, src_visited: &mut Visited2D) -> Option<usize> {
-    /*
-    Function used to pick the next source sample point (if possible).
-    This works by listing out the nearest (unvisited) neighbors of all
-    of the given (visited) source points, and then picking one randomly.
-
-    This can (and often does!) fail if there are no unvisited neighbors.
-    */
-
-    // Get unvisited neighbour of each visited src point (if any)
-    let uv_src_nbs_iter = visited_src_points
-        .iter()
-        .flat_map(|src_pt| src_visited.get_neighbours_unvisited(*src_pt));
-
-    // Randomly pick one of the unvisited neighbors as the sample point
-    // -> This can fail as it's fairly common that we have no neighbors remaining!
-    return uv_src_nbs_iter.choose(&mut rand::rng());
 }
 
 fn make_default_image(image_w: u32, image_h: u32) -> RGBAImageU8 {
