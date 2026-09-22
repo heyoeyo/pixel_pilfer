@@ -150,3 +150,16 @@ pub fn resize_and_overlay(
         }
     });
 }
+
+pub fn copy_pixels(input_image: &RGBAImageU8, output_image: &mut RGBAImageU8) {
+    /*
+    Helper used to copy pixel data from one (input) image into another (output image).
+    Assumes both images are the same size!
+    Similar to using: output_image.copy_from(input_image, 0, 0)
+    But this func avoids weird trait import & more directly represents intent.
+    */
+    debug_assert!(input_image.dimensions() == output_image.dimensions());
+    let input_pixels = input_image.as_raw();
+    let output_pixels = output_image.as_mut();
+    output_pixels.copy_from_slice(&input_pixels);
+}

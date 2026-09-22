@@ -16,11 +16,11 @@ use winit::keyboard::PhysicalKey::Code;
 // Custom library imports
 use crate::imports;
 use imports::accel_source_search::SourceSearch;
-use imports::buffer_helpers::{realloc_image_buffer, resize_and_overlay};
+use imports::buffer_helpers::{copy_pixels, realloc_image_buffer, resize_and_overlay};
 use imports::cli::CliArgs;
 use imports::colormaps::{make_cmap_inferno, make_colormap_lut};
 use imports::layout::{DisplayLayout, get_hstack_layout, get_solo_layout};
-use imports::postproc::{PostProcessConfig, postprocess_source_image, prepare_sized_image_data};
+use imports::postproc::{PostProcessConfig, get_source_wh, postprocess_source_image};
 use imports::state2d::{Visited2D, index_from_xy, random_boundary_index, random_xy_index};
 use imports::text::TextDrawer;
 use imports::thief_data::{ThiefData, ThiefOverlay};
@@ -404,6 +404,7 @@ Toggle pause-on-reset: p
 Toggle sample overlay: o
 Toggle render timer: f
 Toggle grayscale: g
+Toggle galvanize: v
 Reset roll offsets: k
 Step one frame: period
 Save image: s
@@ -612,7 +613,6 @@ pub struct RenderData {
     Holds the original image, a resized (for pilfer) copy and a post-processed copy.
     It also holds full-res copies of the final rendered image data.
     */
-    loaded_src: RGBAImageU8,      // Holds original loaded image data
     base_src_buffer: RGBAImageU8, // Holds clean image scaled to target resolution
     post_src_buffer: RGBAImageU8, // Holds image with post-processing applyied (main working data)
     post_proc_cfg: PostProcessConfig,
@@ -638,7 +638,6 @@ impl RenderData {
         let empty_img = RGBAImageU8::new(0, 0);
 
         Self {
-            loaded_src: empty_img.clone(),
             base_src_buffer: empty_img.clone(),
             post_src_buffer: empty_img.clone(),
             post_proc_cfg: post_process_config,
@@ -657,31 +656,31 @@ impl RenderData {
     }
 
     pub fn store_image(&mut self, loaded_image: RGBAImageU8, output_wh: (usize, usize)) -> (usize, usize) {
-        // Record loaded image & size to match output pixel count
-        self.loaded_src = loaded_image;
-        prepare_sized_image_data(
-            &mut self.base_src_buffer,
-            &self.loaded_src,
+        // Figure out input image sizing to match output image pixel count (with possible under/over-sizing)
+        let resize_wh = get_source_wh(
+            loaded_image.dimensions(),
             output_wh,
             self.post_proc_cfg.relative_src_size,
         );
-        self.post_src_buffer = self.base_src_buffer.clone();
-        self.disp_src_buffer = self.post_src_buffer.clone();
-        self.roll_offset_xy = (0.0, 0.0);
 
-        // Resize output display if needed
-        let (out_w, out_h) = (output_wh.0 as u32, output_wh.1 as u32);
-        if self.disp_out_buffer.width() != out_w || self.disp_out_buffer.height() != out_h {
-            realloc_image_buffer(&mut self.disp_out_buffer, (out_w, out_h));
-        }
+        // Resize (if needed) existing buffers to hold new image data
+        self.base_src_buffer.fill(0);
+        self.post_src_buffer.fill(0);
+        realloc_image_buffer(&mut self.base_src_buffer, resize_wh);
+        realloc_image_buffer(&mut self.post_src_buffer, resize_wh);
+        realloc_image_buffer(&mut self.disp_src_buffer, resize_wh);
+        realloc_image_buffer(&mut self.disp_out_buffer, (output_wh.0 as u32, output_wh.1 as u32));
+
+        // Copy new image into buffers with resizing as needed
+        resize_and_overlay(&mut self.base_src_buffer, &loaded_image, (0, 0), resize_wh, None);
+        resize_and_overlay(&mut self.post_src_buffer, &loaded_image, (0, 0), resize_wh, None);
+        resize_and_overlay(&mut self.disp_src_buffer, &loaded_image, (0, 0), resize_wh, None);
 
         // Reset render state
-        let src_wh = (
-            self.base_src_buffer.width() as usize,
-            self.base_src_buffer.height() as usize,
-        );
+        let src_wh = (resize_wh.0 as usize, resize_wh.1 as usize);
         self.clear();
         self.apply_post_processing();
+        self.roll_offset_xy = (0.0, 0.0);
 
         return src_wh;
     }
@@ -702,8 +701,13 @@ impl RenderData {
     }
 
     pub fn apply_post_processing(&mut self) -> &mut Self {
-        self.post_src_buffer = postprocess_source_image(&self.base_src_buffer, &self.post_proc_cfg);
-        self.disp_src_buffer = self.post_src_buffer.clone();
+        postprocess_source_image(
+            &self.base_src_buffer,     // clean image
+            &mut self.post_src_buffer, // output
+            &mut self.disp_src_buffer, // scratch
+            &self.post_proc_cfg,
+        );
+        copy_pixels(&self.post_src_buffer, &mut self.disp_src_buffer);
         self.thief_olay.clear();
         return self;
     }
