@@ -1,4 +1,6 @@
-use fontdue::{Font, FontSettings};
+use std::collections::HashMap;
+
+use fontdue::{Font, FontSettings, Metrics};
 use image::Rgba;
 
 use crate::imports;
@@ -15,6 +17,7 @@ pub struct FontConfig {
     pub y_offset: f32,
     font: Font,
     size: f32,
+    _raster_cache: HashMap<char, (Metrics, Vec<u8>)>,
     _tallest_char: char,
 }
 
@@ -26,10 +29,22 @@ impl FontConfig {
             load_substitutions: false,
         };
 
-        // Figure out tallest character for setting up the proper baseline offset
+        // Initialize with a cache for re-using fontdue render results
+        // -> The skips re-rendering characters but also avoids excessive re-allocations
+        let raster_cache = HashMap::with_capacity(96);
         let font = Font::from_bytes(font_bytes, settings).unwrap();
-        let tall_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let tall_metrics = tall_chars.chars().map(|c| (c, font.rasterize(c, size).0));
+        let mut new_self = Self {
+            enable_antialias: true,
+            y_offset: 0.0,
+            font: font,
+            size: size,
+            _raster_cache: raster_cache,
+            _tallest_char: 'Q',
+        };
+
+        // Figure out tallest character for setting up the proper baseline offset
+        let ascii_iter = (32u8 as char)..127u8 as char;
+        let tall_metrics = ascii_iter.map(|c| (c, new_self.rasterize(c).0));
         let (mut tallest_char, mut tallest_baseline) = ('A', 0.0);
         for (c, m) in tall_metrics {
             let char_baseline = m.bounds.height + m.bounds.ymin;
@@ -38,14 +53,18 @@ impl FontConfig {
                 tallest_baseline = char_baseline;
             }
         }
+        new_self.y_offset = tallest_baseline;
+        new_self._tallest_char = tallest_char;
 
-        Self {
-            enable_antialias: true,
-            y_offset: tallest_baseline,
-            font: font,
-            size: size,
-            _tallest_char: tallest_char,
-        }
+        return new_self;
+    }
+
+    pub fn rasterize(&mut self, character: char) -> &(Metrics, Vec<u8>) {
+        /* Draw character into buffer. Returns: (render_metrics, alpha_map_u8) */
+        return self
+            ._raster_cache
+            .entry(character)
+            .or_insert_with(|| self.font.rasterize(character, self.size));
     }
 }
 
@@ -70,18 +89,19 @@ impl TextDrawer {
 
     // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
 
-    pub fn xy_px(&self, image: &mut RGBAImageU8, text: &str, xy_px: (u32, u32)) {
+    pub fn xy_px(&mut self, image: &mut RGBAImageU8, text: &str, xy_px: (u32, u32)) {
         /*
         Function used to draw text onto the provided image.
         Text is drawn left-to-right/top-to-bottom.
         For example, if xy_px = (0, 0), the text will be visible in the top left corner of the image
         */
 
+        let is_antialiased = self.font_cfg.enable_antialias;
         let (img_w, img_h) = image.dimensions();
         let mut next_x_pos = xy_px.0 as f32;
         let y_offset = xy_px.1 as f32 + self.font_cfg.y_offset;
         for character in text.chars() {
-            let (char_metrics, char_alpha_2d) = self.font_cfg.font.rasterize(character, self.font_cfg.size);
+            let (char_metrics, char_alpha_2d) = self.font_cfg.rasterize(character);
             let char_x = (next_x_pos + char_metrics.bounds.xmin).round() as u32;
             let char_y = (y_offset - char_metrics.bounds.ymin - char_metrics.bounds.height).round() as u32;
             next_x_pos += char_metrics.advance_width;
@@ -113,7 +133,7 @@ impl TextDrawer {
 
                     // Overwrite image pixel or blend for anti-aliasing effect
                     let pixel_color = image.get_pixel_mut(pixel_x, pixel_y);
-                    if self.font_cfg.enable_antialias && alpha_u8 < 255 {
+                    if is_antialiased && alpha_u8 < 255 {
                         let alpha_norm = alpha_u8 as f32 / 255.0;
                         lerp_colors_mut(pixel_color, self.color, alpha_norm);
                     } else if alpha_u8 > 127 {
@@ -124,12 +144,12 @@ impl TextDrawer {
         }
     }
 
-    pub fn get_text_size(&self, text: &str) -> (f32, f32, f32) {
+    pub fn get_text_size(&mut self, text: &str) -> (f32, f32, f32) {
         let mut txt_w: f32 = 0.0;
         let mut txt_h: f32 = 0.0;
         let mut txt_baseline: f32 = 0.0;
         for character in text.chars() {
-            let (char_metrics, _) = self.font_cfg.font.rasterize(character, self.font_cfg.size);
+            let (char_metrics, _) = self.font_cfg.rasterize(character);
             txt_w += char_metrics.advance_width;
             txt_h = txt_h.max(char_metrics.bounds.height);
             txt_baseline = txt_baseline.max(char_metrics.bounds.ymin * -1.0);
