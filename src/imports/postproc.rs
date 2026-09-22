@@ -3,7 +3,7 @@ use rand::random_range;
 
 // Custom imports
 use crate::imports;
-use imports::buffer_helpers::copy_pixels;
+use imports::buffer_helpers::{copy_pixels, realloc_image_buffer, resize_and_overlay};
 use imports::cli::CliArgs;
 use imports::types::RGBAImageU8;
 
@@ -19,6 +19,7 @@ pub struct PostProcessConfig {
     pub contrast: f32,
     pub blur: u8,
     pub dirt: u8,
+    pub pixelate: u8,
     pub is_grayscale: bool,
 }
 
@@ -30,6 +31,7 @@ impl PostProcessConfig {
             contrast: args.contrast.clamp(-100.0, 100.0),
             blur: args.blur,
             dirt: args.dirt,
+            pixelate: args.pixelate,
             is_grayscale: false,
         }
     }
@@ -126,6 +128,19 @@ pub fn postprocess_source_image(
 
     // Apply transformations to produce final image
     copy_pixels(input_image, output_image);
+    if config.pixelate > 0 {
+        let orig_wh = input_image.dimensions();
+        let min_side = orig_wh.0.min(orig_wh.1) as f32;
+        let downscale_factor = (config.pixelate as f32 / 255.0).powf(0.25);
+        let side_scale_factor = (min_side * (1.0 - downscale_factor) + downscale_factor * 3.0) / min_side;
+        let new_w = (orig_wh.0 as f32 * side_scale_factor).round() as u32;
+        let new_h = (orig_wh.1 as f32 * side_scale_factor).round() as u32;
+        let new_wh = (new_w.max(3), new_h.max(3));
+        realloc_image_buffer(scratch_image, new_wh);
+        resize_and_overlay(scratch_image, output_image, (0, 0), new_wh, None);
+        resize_and_overlay(output_image, scratch_image, (0, 0), orig_wh, None);
+        realloc_image_buffer(scratch_image, orig_wh);
+    }
     if config.hue_rotate != 0 {
         imageops::colorops::huerotate_in_place(output_image, config.hue_rotate);
     }

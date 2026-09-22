@@ -28,5 +28,6 @@ pub enum UIControl {
     Contrast,
     Dirt,
     Hue,
+    Pixelate,
     Roll,
 }

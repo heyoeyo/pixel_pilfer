@@ -58,6 +58,9 @@ pub struct CliArgs {
     )]
     pub contrast: f32,
 
+    #[arg(short = 'l', default_value_t = 0, help = "Set pixelation factor (0 to 255)")]
+    pub pixelate: u8,
+
     #[arg(
     short = 'r',
     long ="roll_xy",

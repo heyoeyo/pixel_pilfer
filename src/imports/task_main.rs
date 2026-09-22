@@ -7,8 +7,8 @@ use rand::{random_bool, random_range};
 
 use image::ImageError;
 use winit::keyboard::KeyCode::{
-    ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, KeyB, KeyC, KeyD, KeyF, KeyG, KeyH, KeyK, KeyO, KeyP,
-    KeyR, KeyS, KeyV, KeyZ, Period, Space, Tab,
+    ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, KeyB, KeyC, KeyD, KeyF, KeyG, KeyH, KeyK, KeyL, KeyO,
+    KeyP, KeyR, KeyS, KeyV, KeyZ, Period, Space, Tab,
 };
 use winit::keyboard::PhysicalKey;
 use winit::keyboard::PhysicalKey::Code;
@@ -274,6 +274,7 @@ impl Task {
                     UIControl::Contrast => self.render.post_proc_cfg.contrast = 0.0,
                     UIControl::Dirt => self.render.post_proc_cfg.dirt = 0,
                     UIControl::Hue => self.render.post_proc_cfg.hue_rotate = 0,
+                    UIControl::Pixelate => self.render.post_proc_cfg.pixelate = 0,
                     UIControl::Roll => {
                         self.render.roll_speed_xy = (0.0, 0.0);
                         self.enable_animation = false;
@@ -286,13 +287,14 @@ impl Task {
                 }
             }
 
-            Code(KeyB | KeyC | KeyD | KeyH | KeyR) => {
+            Code(KeyB | KeyC | KeyD | KeyH | KeyL | KeyR) => {
                 let prev_focused = self.ui_focused.clone();
                 match keypress {
                     Code(KeyB) => self.ui_focused = UIControl::Blur,
                     Code(KeyC) => self.ui_focused = UIControl::Contrast,
                     Code(KeyD) => self.ui_focused = UIControl::Dirt,
                     Code(KeyH) => self.ui_focused = UIControl::Hue,
+                    Code(KeyL) => self.ui_focused = UIControl::Pixelate,
                     Code(KeyR) => self.ui_focused = UIControl::Roll,
                     _ => {}
                 }
@@ -336,6 +338,13 @@ impl Task {
                         let new_value = self.render.post_proc_cfg.hue_rotate + (5 * arrow_dir);
                         self.render.post_proc_cfg.hue_rotate = (new_value + 360) % 360; // Force 0-to-360 range
                         self.render.post_proc_cfg.is_grayscale = false;
+                    }
+                    UIControl::Pixelate => {
+                        self.render.post_proc_cfg.pixelate = self
+                            .render
+                            .post_proc_cfg
+                            .pixelate
+                            .saturating_add_signed(5 * arrow_dir as i8);
                     }
                     UIControl::Roll => {
                         let arrow_dir_f32 = arrow_dir as f32;
@@ -405,6 +414,7 @@ Toggle sample overlay: o
 Toggle render timer: f
 Toggle grayscale: g
 Toggle galvanize: v
+Toggle pixelation: l
 Reset roll offsets: k
 Step one frame: period
 Save image: s
@@ -801,6 +811,7 @@ impl RenderData {
                         UIControl::Dirt => format!("Dirt: {}", self.post_proc_cfg.dirt),
                         UIControl::Hue => format!("Hue: {}", self.post_proc_cfg.hue_rotate),
                         UIControl::Roll => format!("Roll speed: {}, {}", self.roll_speed_xy.0, self.roll_speed_xy.1),
+                        UIControl::Pixelate => format!("Pixelate: {}", self.post_proc_cfg.pixelate),
                     };
                     let txt_y = outer_hstack.wh.1 + outer_hstack.xy.1.max(0) as u32 + txt_pad;
                     self.txtdraw.xy_px(display_buffer, &disp_txt, (5, txt_y));
