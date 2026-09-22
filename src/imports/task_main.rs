@@ -13,6 +13,9 @@ use winit::keyboard::KeyCode::{
 use winit::keyboard::PhysicalKey;
 use winit::keyboard::PhysicalKey::Code;
 
+// Traits
+use std::fmt::Write; // Needed for text::wtxtdraw confusingly...
+
 // Custom library imports
 use crate::imports;
 use imports::accel_source_search::SourceSearch;
@@ -22,7 +25,7 @@ use imports::colormaps::{make_cmap_inferno, make_colormap_lut};
 use imports::layout::{DisplayLayout, get_hstack_layout, get_solo_layout};
 use imports::postproc::{PostProcessConfig, get_source_wh, postprocess_source_image};
 use imports::state2d::{Visited2D, index_from_xy, random_boundary_index, random_xy_index};
-use imports::text::TextDrawer;
+use imports::text::{TextDrawer, wtxtdraw};
 use imports::thief_data::{ThiefData, ThiefOverlay};
 use imports::types::{RGBAImageU8, UIControl};
 
@@ -805,26 +808,32 @@ impl RenderData {
 
                 if show_text {
                     // Decide what control text to show
-                    let disp_txt = match &self.focused_ctrl {
-                        UIControl::Blur => format!("Blur: {}", self.post_proc_cfg.blur),
-                        UIControl::Contrast => format!("Contrast: {}", self.post_proc_cfg.contrast),
-                        UIControl::Dirt => format!("Dirt: {}", self.post_proc_cfg.dirt),
-                        UIControl::Hue => format!("Hue: {}", self.post_proc_cfg.hue_rotate),
-                        UIControl::Roll => format!("Roll speed: {}, {}", self.roll_speed_xy.0, self.roll_speed_xy.1),
-                        UIControl::Pixelate => format!("Pixelate: {}", self.post_proc_cfg.pixelate),
-                    };
                     let txt_y = outer_hstack.wh.1 + outer_hstack.xy.1.max(0) as u32 + txt_pad;
-                    self.txtdraw.xy_px(display_buffer, &disp_txt, (5, txt_y));
+                    match &self.focused_ctrl {
+                        UIControl::Blur => wtxtdraw!(self.txtdraw, "Blur: {}", self.post_proc_cfg.blur),
+                        UIControl::Contrast => wtxtdraw!(self.txtdraw, "Contrast: {}", self.post_proc_cfg.contrast),
+                        UIControl::Dirt => wtxtdraw!(self.txtdraw, "Dirt: {}", self.post_proc_cfg.dirt),
+                        UIControl::Hue => wtxtdraw!(self.txtdraw, "Hue: {}", self.post_proc_cfg.hue_rotate),
+                        UIControl::Pixelate => wtxtdraw!(self.txtdraw, "Pixelate: {}", self.post_proc_cfg.pixelate),
+                        UIControl::Roll => wtxtdraw!(
+                            self.txtdraw,
+                            "Roll speed: {}, {}",
+                            self.roll_speed_xy.0,
+                            self.roll_speed_xy.1
+                        ),
+                    };
+                    self.txtdraw.xy_px(display_buffer, (5, txt_y));
 
                     // Draw text to indicate source image sizing (helpful for roll settings)
-                    let size_txt = &format!(
+                    wtxtdraw!(
+                        self.txtdraw,
                         "Source WH: {} x {}",
                         self.post_src_buffer.width(),
                         self.post_src_buffer.height()
                     );
-                    let (size_w, _, _) = self.txtdraw.get_text_size(size_txt);
+                    let (size_w, _, _) = self.txtdraw.get_text_size();
                     let size_x = (display_buffer.width() - txt_pad).saturating_sub(size_w as u32);
-                    self.txtdraw.xy_px(display_buffer, size_txt, (size_x, txt_y));
+                    self.txtdraw.xy_px(display_buffer, (size_x, txt_y));
                 }
             }
 
@@ -842,8 +851,8 @@ impl RenderData {
         // Draw top-left indicator showing time needed to draw frame
         if self.enable_render_timer {
             let time_us = render_timer.elapsed().as_micros();
-            let render_time_str = format!("{} us", time_us);
-            self.txtdraw.xy_px(display_buffer, &render_time_str, (5, 5));
+            wtxtdraw!(self.txtdraw, "{} us", time_us);
+            self.txtdraw.xy_px(display_buffer, (5, 5));
         }
     }
 }

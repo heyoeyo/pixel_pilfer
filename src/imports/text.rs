@@ -72,6 +72,7 @@ impl FontConfig {
 
 pub struct TextDrawer {
     pub font_cfg: FontConfig,
+    pub text: String,
     color: Rgba<u8>,
 }
 
@@ -80,6 +81,7 @@ impl TextDrawer {
         Self {
             font_cfg: FontConfig::new(size, font_bytes),
             color: Rgba([255, 255, 255, 255]),
+            text: String::with_capacity(128),
         }
     }
 
@@ -89,18 +91,18 @@ impl TextDrawer {
 
     // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
 
-    pub fn xy_px(&mut self, image: &mut RGBAImageU8, text: &str, xy_px: (u32, u32)) {
+    pub fn xy_px(&mut self, image: &mut RGBAImageU8, xy_px: (u32, u32)) {
         /*
-        Function used to draw text onto the provided image.
-        Text is drawn left-to-right/top-to-bottom.
-        For example, if xy_px = (0, 0), the text will be visible in the top left corner of the image
+        Function used to draw text onto the provided image. Text is drawn left-to-right/top-to-bottom.
+        For example, if xy_px = (0, 0), the text will be visible in the top left corner of the image.
+        Note, the text is drawn from the current state of the .text buffer! Use: wtxtdraw! to update this.
         */
 
         let is_antialiased = self.font_cfg.enable_antialias;
         let (img_w, img_h) = image.dimensions();
         let mut next_x_pos = xy_px.0 as f32;
         let y_offset = xy_px.1 as f32 + self.font_cfg.y_offset;
-        for character in text.chars() {
+        for character in self.text.chars() {
             let (char_metrics, char_alpha_2d) = self.font_cfg.rasterize(character);
             let char_x = (next_x_pos + char_metrics.bounds.xmin).round() as u32;
             let char_y = (y_offset - char_metrics.bounds.ymin - char_metrics.bounds.height).round() as u32;
@@ -144,11 +146,11 @@ impl TextDrawer {
         }
     }
 
-    pub fn get_text_size(&mut self, text: &str) -> (f32, f32, f32) {
+    pub fn get_text_size(&mut self) -> (f32, f32, f32) {
         let mut txt_w: f32 = 0.0;
         let mut txt_h: f32 = 0.0;
         let mut txt_baseline: f32 = 0.0;
-        for character in text.chars() {
+        for character in self.text.chars() {
             let (char_metrics, _) = self.font_cfg.rasterize(character);
             txt_w += char_metrics.advance_width;
             txt_h = txt_h.max(char_metrics.bounds.height);
@@ -168,3 +170,22 @@ fn lerp_colors_mut(c_out: &mut Rgba<u8>, c_in: Rgba<u8>, alpha_norm: f32) {
     c_out.0[1] = (c_in.0[1] as f32 * alpha_norm + c_out.0[1] as f32 * inv_alpha) as u8;
     c_out.0[2] = (c_in.0[2] as f32 * alpha_norm + c_out.0[2] as f32 * inv_alpha) as u8;
 }
+
+macro_rules! wtxtdraw {
+	/*
+	This is meant to act like the 'write!' macro, but edits the internal string buffer of the text drawer.
+	From the user/caller perspective, this macro is like doing:
+		txtdraw.text.clear()
+		write!(&mut txtdraw.text, "Some data: {} and {}", value_1, value_2);
+
+	This macro just helps to hide the buffer access details, usage is like:
+		wtxtdraw!(txtdraw, "Some data: {} and {}", value_1, value_2);
+ */
+    ($txtdrawer:expr, $($arg:tt)*) => {
+        {
+            $txtdrawer.text.clear();
+            let _ = write!(&mut $txtdrawer.text, $($arg)*);
+        }
+    };
+}
+pub(crate) use wtxtdraw;
