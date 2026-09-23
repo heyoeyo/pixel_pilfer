@@ -417,7 +417,6 @@ Toggle sample overlay: o
 Toggle render timer: f
 Toggle grayscale: g
 Toggle galvanize: v
-Toggle pixelation: l
 Reset roll offsets: k
 Step one frame: period
 Save image: s
@@ -427,6 +426,7 @@ Adjust blur: b
 Adjust contrast: c
 Adjust dirty blur: d
 Adjust hue: h
+Adjust pixelation: l
 Adjust roll xy: r
 Reset current setting: z
         "
@@ -868,36 +868,34 @@ fn make_default_image(image_w: u32, image_h: u32) -> RGBAImageU8 {
         [40, 175, 100],
         [90, 235, 75],
         [130, 255, 90],
-        [0, 75, 90],
     ];
     let cmap = make_colormap_lut(&cmap);
     let max_cmap_idx = cmap.len() - 1;
     let max_cmap_idx_f32 = max_cmap_idx as f32;
 
-    // Draw image, pixel-by-pixel, with twirling effect
+    // Draw image colored by angle with a twirling effect
     // -> This is based on the 'twirl-node' from the Unity game engine
-    let img_wh = (image_w / 2, image_h / 2);
-    let (x_cen, y_cen) = (random_range(0.25..0.75), random_range(0.25..0.75));
-    let effect_strength = random_range(2.0..8.0) * (2 * random_bool(0.5) as i32 - 1) as f32;
-    let mut out_img = RGBAImageU8::new(img_wh.0 as u32, img_wh.1 as u32);
+    let img_half_wh = (image_w / 2, image_h / 2);
+    let twirl_effect_strength = random_range(0.5..2.0) * (2 * random_bool(0.5) as i32 - 1) as f32;
+    let repeat_count: i32 = random_range(2..4);
+    let mut out_img = RGBAImageU8::new(image_w, image_h);
     for (x, y, pixel) in out_img.enumerate_pixels_mut() {
-        let x_norm = x as f32 / img_wh.0 as f32;
-        let y_norm = y as f32 / img_wh.1 as f32;
-        let (dx, dy) = (x_norm - x_cen, y_norm - y_cen);
-        let dist = (dx * dx + dy * dy).sqrt();
-        let angle = effect_strength * dist;
-        let mut twirl = angle.cos() * dx - angle.sin() * dy + x_cen;
+        let dx = (x as f32 - img_half_wh.0 as f32) / img_half_wh.0 as f32;
+        let dy = (y as f32 - img_half_wh.1 as f32) / img_half_wh.1 as f32;
+        let radial_dist = (dx * dx + dy * dy).sqrt();
 
-        // Reflect values outside 0.0-1.0 range
-        if twirl < 0.0 {
-            twirl = twirl.abs();
-        }
-        if twirl > 1.0 {
-            twirl = 2.0 - twirl;
-        }
+        // Apply twirl to coordinates
+        let twirl_angle = radial_dist * twirl_effect_strength;
+        let cos = twirl_angle.cos();
+        let sin = twirl_angle.sin();
+        let tx = cos * dx - sin * dy;
+        let ty = sin * dx + cos * dy;
 
-        let y_idx = (twirl * max_cmap_idx_f32).round() as usize;
-        *pixel = cmap[y_idx.clamp(0, max_cmap_idx)];
+        // Color by (twirled) angle
+        let angle = -ty.atan2(tx);
+        let color_scale = (repeat_count as f32 * angle).sin().abs() * radial_dist;
+        let cmap_idx = (color_scale * max_cmap_idx_f32).round() as usize;
+        *pixel = cmap[cmap_idx.clamp(0, max_cmap_idx)];
     }
 
     return out_img;
