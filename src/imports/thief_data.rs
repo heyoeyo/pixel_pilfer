@@ -1,6 +1,6 @@
 use crate::imports;
 use imports::state2d::{State2D, xy_from_index, xy_from_index_u32};
-use imports::types::{Colormap, RGBAImageU8};
+use imports::types::{BYTES_PER_PIXEL, Colormap, DEFAULT_THREAD_COUNT, RGBAImageU8};
 
 // --------------------------------------------------------------------------------------------------------------------
 // %% Structs
@@ -108,29 +108,27 @@ impl ThiefData {
         let n_threads = num_threads.unwrap_or({
             std::thread::available_parallelism()
                 .map(|n| n.get())
-                .unwrap_or(4)
+                .unwrap_or(DEFAULT_THREAD_COUNT)
                 .clamp(1, num_out_pixels)
         });
         let px_per_thread = ((num_out_pixels as f32) / (n_threads as f32)).ceil().max(1.0) as usize;
-        let bytes_per_thread = px_per_thread * 4;
+        let bytes_per_thread = px_per_thread * BYTES_PER_PIXEL;
 
         // Split image into separate blocks of pixels, handled by separate threads
+        let src_pixel_data = source_image.as_raw();
         std::thread::scope(|s| {
             for (thread_idx, thread_img_bytes) in output_image.chunks_mut(bytes_per_thread).enumerate() {
                 s.spawn(move || {
                     let thread_start_px_idx = thread_idx * px_per_thread;
-                    for (px_offset, out_px_bytes) in thread_img_bytes.chunks_exact_mut(4).enumerate() {
+                    for (px_offset, out_px_bytes) in thread_img_bytes.chunks_mut(BYTES_PER_PIXEL).enumerate() {
                         let out_px_idx = thread_start_px_idx + px_offset;
                         if let Some(src_px_idx) = self.read(out_px_idx) {
                             // Copy source pixel into output
                             let (src_x, src_y) = xy_from_index_u32(src_px_idx as u32, src_w);
                             let x_idx = (src_x + offset_x) % src_w;
                             let y_idx = (src_y + offset_y) % src_h;
-                            let src_rgba = source_image.get_pixel(x_idx, y_idx);
-                            out_px_bytes[0] = src_rgba[0];
-                            out_px_bytes[1] = src_rgba[1];
-                            out_px_bytes[2] = src_rgba[2];
-                            out_px_bytes[3] = src_rgba[3];
+                            let new_idx = (x_idx + y_idx * src_w) as usize * BYTES_PER_PIXEL;
+                            out_px_bytes.copy_from_slice(&src_pixel_data[new_idx..new_idx + BYTES_PER_PIXEL]);
                         }
                     }
                 }); // End of spawn block
@@ -180,8 +178,8 @@ impl ThiefOverlay {
         let mut sample_idx = self.last_iter_idx as f32;
         let src_w = source_display_image.width() as usize;
         for src_idx in &source_sample_order[self.last_iter_idx..] {
-            let idx_1024 = (sample_idx * sample_scale * cmap_max_idx).round() as usize;
-            let thief_color = self.cmap[idx_1024];
+            let cmap_idx = (sample_idx * sample_scale * cmap_max_idx).round() as usize;
+            let thief_color = self.cmap[cmap_idx];
             let (x, y) = xy_from_index(*src_idx, src_w);
             source_display_image.put_pixel(x as u32, y as u32, thief_color);
             sample_idx += 1.0;

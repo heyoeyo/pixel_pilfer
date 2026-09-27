@@ -5,11 +5,7 @@ use rand::random_range;
 use crate::imports;
 use imports::buffer_helpers::{copy_pixels, realloc_image_buffer, resize_and_overlay};
 use imports::cli::CliArgs;
-use imports::types::RGBAImageU8;
-
-// --------------------------------------------------------------------------------------------------------------------
-
-const TWO_PI: f32 = 2.0 * std::f32::consts::PI;
+use imports::types::{BYTES_PER_PIXEL, DEFAULT_THREAD_COUNT, RGBAImageU8, TWO_PI};
 
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -76,11 +72,11 @@ pub fn dirty_blur(
     let n_threads = num_threads.unwrap_or({
         std::thread::available_parallelism()
             .map(|n| n.get())
-            .unwrap_or(4)
+            .unwrap_or(DEFAULT_THREAD_COUNT)
             .clamp(1, num_out_pixels)
     });
     let px_per_thread = ((num_out_pixels as f32) / (n_threads as f32)).ceil().max(1.0) as usize;
-    let bytes_per_thread = px_per_thread * 4;
+    let bytes_per_thread = px_per_thread * BYTES_PER_PIXEL;
 
     // Split image into separate blocks of pixels, handled by separate threads
     let in_pixels = input_image.as_raw();
@@ -91,7 +87,7 @@ pub fn dirty_blur(
                 // Loop over each pixel within block and sample in random surrounding circle
                 let thread_start_px_idx = thread_idx * px_per_thread;
                 let img_w_usize = img_w as usize;
-                for (px_offset, out_px_bytes) in thread_img_bytes.chunks_exact_mut(4).enumerate() {
+                for (px_offset, out_px_bytes) in thread_img_bytes.chunks_mut(BYTES_PER_PIXEL).enumerate() {
                     // Convert the flat index back into (x, y) coordinates
                     let curr_px_idx = thread_start_px_idx + px_offset;
                     let x = curr_px_idx % img_w_usize;
@@ -106,8 +102,8 @@ pub fn dirty_blur(
                     let new_y = (y as i32 + dy).clamp(0, max_y) as u32;
 
                     // Copy original pixel into new output
-                    let new_px_idx = ((new_x + new_y * img_w) * 4) as usize;
-                    out_px_bytes[0..4].copy_from_slice(&in_pixels[new_px_idx..new_px_idx + 4]);
+                    let new_px_idx = (new_x + new_y * img_w) as usize * BYTES_PER_PIXEL;
+                    out_px_bytes.copy_from_slice(&in_pixels[new_px_idx..new_px_idx + BYTES_PER_PIXEL]);
                 }
             });
         }

@@ -3,8 +3,16 @@ use std::path::PathBuf;
 use winit::keyboard::PhysicalKey;
 
 // --------------------------------------------------------------------------------------------------------------------
+// Constants
 
-pub type Colormap = [Rgba<u8>; 1024];
+pub const DEFAULT_THREAD_COUNT: usize = 4;
+pub const BYTES_PER_PIXEL: usize = 4;
+pub const TWO_PI: f32 = 2.0 * std::f32::consts::PI;
+const COLORMAP_LEN: usize = 1024;
+
+// --------------------------------------------------------------------------------------------------------------------
+
+pub type Colormap = [Rgba<u8>; COLORMAP_LEN];
 
 pub enum ChannelMessage {
     /* Used to move data between window-to->render thread */

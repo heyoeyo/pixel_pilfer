@@ -1,9 +1,5 @@
 use crate::imports::types;
-use types::RGBAImageU8;
-
-// --------------------------------------------------------------------------------------------------------------------
-
-const BYTES_PER_PIXEL: usize = 4;
+use types::{BYTES_PER_PIXEL, DEFAULT_THREAD_COUNT, RGBAImageU8};
 
 // --------------------------------------------------------------------------------------------------------------------
 // Functions
@@ -109,7 +105,7 @@ pub fn resize_and_overlay(
     let n_threads = num_threads.unwrap_or({
         std::thread::available_parallelism()
             .map(|n| n.get())
-            .unwrap_or(4)
+            .unwrap_or(DEFAULT_THREAD_COUNT)
             .clamp(1, num_rows_to_copy)
     });
     let rows_per_thread = (num_rows_to_copy as f32 / n_threads as f32).ceil() as usize;
@@ -143,7 +139,7 @@ pub fn resize_and_overlay(
                     for (seg_col_idx, out_col_bytes) in out_row_segment.chunks_mut(BYTES_PER_PIXEL).enumerate() {
                         let rsz_x1 = new_y_pxidx + xpx_idxs[seg_col_idx];
                         let rsz_x2 = rsz_x1 + BYTES_PER_PIXEL;
-                        out_col_bytes[0..BYTES_PER_PIXEL].copy_from_slice(&in_pixel_data[rsz_x1..rsz_x2]);
+                        out_col_bytes.copy_from_slice(&in_pixel_data[rsz_x1..rsz_x2]);
                     }
                 }
             });
