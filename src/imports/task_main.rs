@@ -7,8 +7,8 @@ use rand::{random_bool, random_range};
 
 use image::ImageError;
 use winit::keyboard::KeyCode::{
-    ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, KeyB, KeyC, KeyD, KeyF, KeyG, KeyH, KeyK, KeyL, KeyO,
-    KeyP, KeyR, KeyS, KeyV, KeyZ, Period, Space, Tab,
+    ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, KeyB, KeyC, KeyD, KeyF, KeyG, KeyH, KeyK, KeyL, KeyN,
+    KeyO, KeyP, KeyR, KeyS, KeyV, KeyZ, Period, Space, Tab,
 };
 use winit::keyboard::PhysicalKey;
 use winit::keyboard::PhysicalKey::Code;
@@ -24,7 +24,7 @@ use imports::cli::CliArgs;
 use imports::colormaps::{make_cmap_inferno, make_colormap_lut};
 use imports::layout::{DisplayLayout, get_hstack_layout, get_solo_layout};
 use imports::postproc::{PostProcessConfig, get_source_wh, postprocess_source_image};
-use imports::state2d::{Visited2D, index_from_xy, random_boundary_index, random_xy_index};
+use imports::state2d::{Visited2D, index_from_xy, random_xy_index};
 use imports::text::{TextDrawer, wtxtdraw};
 use imports::thief_data::{ThiefData, ThiefOverlay};
 use imports::types::{RGBAImageU8, UIControl};
@@ -263,6 +263,11 @@ impl Task {
                 self.request_one_rerender = true;
             }
 
+            // Toggle full search mode
+            Code(KeyN) => {
+                self.data.enable_full_search = !self.data.enable_full_search;
+            }
+
             // Toggle galvanize
             Code(KeyV) => {
                 self.data.enable_galvanized_mode = !self.data.enable_galvanized_mode;
@@ -417,6 +422,7 @@ Toggle sample overlay: o
 Toggle render timer: f
 Toggle grayscale: g
 Toggle galvanize: v
+Toggle full-search: n
 Reset roll offsets: k
 Step one frame: period
 Save image: s
@@ -451,6 +457,7 @@ pub struct WorkData {
     out_visited: Visited2D,
     src_visited: Visited2D,
     uv_out_nbs: Vec<usize>,
+    missed_out_samples: Vec<usize>,
     src_accel_search: SourceSearch,
     pub thief_data: ThiefData,
     init_out_sample: Option<(f32, f32)>,
@@ -479,6 +486,7 @@ impl WorkData {
             out_visited: Visited2D::new(output_wh),
             src_visited: Visited2D::new(init_src_wh),
             uv_out_nbs: Vec::with_capacity(output_wh.0.max(output_wh.1) * 6), // Roughly: 2*pi*max_radius * 2
+            missed_out_samples: Vec::with_capacity((output_wh.0 * output_wh.1) / 2),
             src_accel_search: SourceSearch::new(if enable_galvanized_mode { 64 } else { 16 }),
             thief_data: ThiefData::new(output_wh, init_src_wh),
             init_out_sample: initial_output_sample_xy_norm,
@@ -508,12 +516,13 @@ impl WorkData {
         self.out_visited.clear();
         self.src_visited.clear();
         self.uv_out_nbs.clear();
+        self.missed_out_samples.clear();
         self.src_accel_search.clear();
         self.is_done = false;
 
         // Pick sample points
         // -> We re-use user provided sample points (if given) otherwise randomize on every reset
-        let mut init_out_sample: usize = random_boundary_index(self.out_wh.0, self.out_wh.1);
+        let mut init_out_sample: usize = random_xy_index(self.out_wh.0, self.out_wh.1);
         if let Some(out_sample_xy) = self.init_out_sample {
             let out_x_px = out_sample_xy.0.clamp(0.0, 1.0) * (self.out_wh.0.saturating_sub(1) as f32);
             let out_y_px = out_sample_xy.1.clamp(0.0, 1.0) * (self.out_wh.1.saturating_sub(1) as f32);
@@ -549,9 +558,10 @@ impl WorkData {
         let mut cache_uv_src_nb_pts: Vec<usize> = Vec::with_capacity(4 * 4); // 'unvisited source neighbor points'
         let mut rng = rand::rng();
 
-        // Iterate over all pixels if we're not given a max count
+        // Loop until we sample 'enough' points or run out of time (e.g. need to stop to re-render)
+        let mut iter_count = 0;
         let timer = Instant::now();
-        for _ in 0..self.num_steal_per_iter {
+        loop {
             // Stop if we ever run for too long (ensures we update the display regularly)
             if timer.elapsed() > max_duration && !self.enable_profile_mode {
                 break;
@@ -560,6 +570,15 @@ impl WorkData {
             // Stop if we have no more pixels to draw
             let num_pts = self.uv_out_nbs.len();
             if num_pts == 0 {
+                // Check if we have missed points to deal with. If so, treat them as new points to sample
+                // -> We also reset visit state, otherwise we'll get stuck. This causes re-sampling of points though!
+                if self.missed_out_samples.len() > 0 {
+                    std::mem::swap(&mut self.uv_out_nbs, &mut self.missed_out_samples);
+                    self.src_visited.clear();
+                    continue;
+                }
+
+                // If we get here, there are no more points to sample, so we're done
                 self.is_done = true;
                 if self.enable_profile_mode {
                     println!("-> Took {} ms", timer.elapsed().as_millis());
@@ -571,7 +590,7 @@ impl WorkData {
             let rand_uv_onb_idx: usize = if self.enable_galvanized_mode {
                 random_range((num_pts.saturating_sub(3))..num_pts)
             } else {
-                random_range(0..self.uv_out_nbs.len())
+                random_range(0..num_pts)
             };
             let next_out_sample = self.uv_out_nbs.swap_remove(rand_uv_onb_idx);
 
@@ -586,7 +605,7 @@ impl WorkData {
             let try_next_src_sample = if self.enable_full_search {
                 self.src_accel_search.get_nearest_point(&cache_visited_src_pts)
             } else {
-                // Get all neighbors of visited source points and point one randomly
+                // Get all neighbors of visited source points and sample one randomly
                 // -> This can fail if all neighbors are already taken
                 cache_uv_src_nb_pts.clear();
                 for pt in &cache_visited_src_pts {
@@ -598,6 +617,12 @@ impl WorkData {
             // Record src->out mapping and mark pixels as visited
             if let Some(next_src_sample) = try_next_src_sample {
                 self.record_samples(next_out_sample, next_src_sample);
+                iter_count += 1;
+                if iter_count > self.num_steal_per_iter {
+                    break;
+                }
+            } else {
+                self.missed_out_samples.push(next_out_sample);
             }
         }
 

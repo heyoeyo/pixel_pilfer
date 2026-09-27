@@ -98,7 +98,7 @@ pub struct CliArgs {
     #[arg(
         short = 'n',
         long = "no_search",
-        help = "Disables full-search mode. This will run faster, but the resulting image will have holes"
+        help = "Disables full-search mode. Typically produces more interesting patterns at the cost of some input pixels being sampled more than once"
     )]
     pub disable_full_search: bool,
 

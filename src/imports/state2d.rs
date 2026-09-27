@@ -213,24 +213,6 @@ pub fn index_from_xy(x: usize, y: usize, grid_width: usize) -> pidx {
     return y * grid_width + x;
 }
 
-pub fn random_boundary_index(width: usize, height: usize) -> pidx {
-    let (max_x, max_y) = (width - 1, height - 1);
-    let (xmid, ymid) = (max_x / 2, max_y / 2);
-    let (x, y) = match random_range(0usize..9usize) {
-        0 => (0, 0),                             // TL
-        1 => (xmid, 0),                          // Top-mid
-        2 => (max_x, 0),                         // TR
-        3 => (max_x, ymid),                      // Right-mid
-        4 => (max_x, max_y),                     // BR
-        5 => (xmid, max_y),                      // Bottom-mid
-        6 => (0, max_y),                         // BL
-        7 => (0, ymid),                          // Left-Mid
-        8 => (xmid, ymid),                       // Exact-mid
-        _ => panic!("Unexpected random index!"), // Never happens
-    };
-    return index_from_xy(x, y, width);
-}
-
 pub fn random_xy_index(width: usize, height: usize) -> pidx {
     let x = random_range(0..width);
     let y = random_range(0..height);
