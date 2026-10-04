@@ -27,6 +27,7 @@ pub struct WindowThread {
     */
     window: Option<Arc<Window>>,
     surface: Option<Surface<Arc<Window>, Arc<Window>>>,
+    output_wh: (u32, u32),
     init_display_wh: Option<(u32, u32)>,
     curr_display_wh: (u32, u32),
     shared_state: SharedStateReader,
@@ -39,6 +40,7 @@ impl WindowThread {
         shared_state: SharedStateReader,
         initial_image_path: Option<PathBuf>,
         initial_display_wh: Option<(u32, u32)>,
+        output_wh: (u32, u32),
     ) -> Self {
         // Special handling of initial image path. We want the window to remember the parent folder
         // -> This way, if user loads more images, the file picker starts in the same folder as the loaded file
@@ -52,6 +54,7 @@ impl WindowThread {
         return Self {
             window: None,
             surface: None,
+            output_wh: output_wh,
             init_display_wh: initial_display_wh,
             curr_display_wh: (8, 8),
             shared_state: shared_state,
@@ -68,10 +71,15 @@ impl WindowThread {
                 .or_else(|| event_loop.available_monitors().next())
                 .expect("No monitor found!?");
             let monitor_size = monitor_info.size();
-            let disp_wh = self.init_display_wh.unwrap_or((
-                (monitor_size.width as f32 * 0.5).round() as u32,
-                (monitor_size.height as f32 * 0.5).round() as u32,
-            ));
+            let disp_wh = self.init_display_wh.unwrap_or({
+                // If no display size given, scale to output aspect ratio but within halved monitor resolution
+                let scale_w = 0.5 * monitor_size.width as f32 / self.output_wh.0 as f32;
+                let scale_h = 0.5 * monitor_size.height as f32 / self.output_wh.1 as f32;
+                let disp_scale = scale_w.min(scale_h).min(1.0);
+                let disp_w = (self.output_wh.0 as f32 * disp_scale).round() as u32;
+                let disp_h = (self.output_wh.1 as f32 * disp_scale).round() as u32;
+                (disp_w, disp_h)
+            });
 
             // Resize our buffer to the max size to reduce need for re-allocation on resizing
             let max_wh = (monitor_size.width, monitor_size.height);

@@ -53,18 +53,6 @@ pub struct Task {
 
 impl Task {
     pub fn new(args: CliArgs) -> Self {
-        // Figure out output sizing (user can provide 1 or 2 numbers)
-        let out_size = &args.output_wh;
-        let num_sizes = out_size.len();
-        let target_out_wh;
-        if num_sizes == 1 {
-            target_out_wh = (out_size[0] as usize, out_size[0] as usize);
-        } else if num_sizes == 2 {
-            target_out_wh = (out_size[0] as usize, out_size[1] as usize);
-        } else {
-            panic!("Unexpected output sizing! Should be 1 or 2 entries, got: {}", num_sizes);
-        }
-
         // Set up initial samples (if present)
         let mut init_out_xy: Option<(f32, f32)> = None;
         if let Some(init_out_xy_arg) = &args.output_xy {
@@ -76,22 +64,23 @@ impl Task {
         }
 
         // Initialize rendering data
+        let out_wh = (args.output_wh[0] as usize, args.output_wh[1] as usize);
         let init_roll_speed = (args.roll_speed_xy[0], args.roll_speed_xy[1]);
         let loaded_img = make_default_image(800, 800);
         let posproc_cfg = PostProcessConfig::from_cli(&args);
         let mut render_data = RenderData::new(posproc_cfg, init_roll_speed);
-        let src_wh = render_data.store_image(loaded_img, target_out_wh);
+        let src_wh = render_data.store_image(loaded_img, out_wh);
 
         // Compute number of pixels to 'steal' to achieve target running time
-        let num_out_pixels = target_out_wh.0 * target_out_wh.1;
+        let num_out_pixels = out_wh.0 * out_wh.1;
         let num_px_steal = num_out_pixels as f32 / (args.framerate * args.target_steal_time_sec);
 
         // Initialize working dataset
         let mut work_data = WorkData::new(
-            target_out_wh,
+            out_wh,
             init_out_xy,
             init_src_xy,
-            !args.disable_full_search,
+            args.enable_full_search,
             args.debug_profiling,
             args.enable_galvanized_mode,
             num_px_steal.max(1.0).round() as usize,

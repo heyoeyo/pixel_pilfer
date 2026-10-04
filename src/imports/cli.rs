@@ -15,9 +15,9 @@ pub struct CliArgs {
 
     #[arg(
         short = 'o',
-        num_args = 1..=2,
-        default_values_t = vec![800, 450],
-        value_names = ["OUTPUT_W", "OUTPUT_H (optional)"],
+        num_args = 2,
+        default_values_t = vec![1280, 720],
+        value_names = ["OUTPUT_W", "OUTPUT_H"],
         help = "The size of the generated output image in pixels",
     )]
     pub output_wh: Vec<u32>,
@@ -97,10 +97,10 @@ pub struct CliArgs {
 
     #[arg(
         short = 'n',
-        long = "no_search",
-        help = "Disables full-search mode. Typically produces more interesting patterns at the cost of some input pixels being sampled more than once"
+        long = "no_cheat",
+        help = "Enables full-search mode. Guarantees that input image pixels are only sampled once at most"
     )]
-    pub disable_full_search: bool,
+    pub enable_full_search: bool,
 
     #[arg(
         short = 'g',
