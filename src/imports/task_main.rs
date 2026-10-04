@@ -8,7 +8,7 @@ use rand::{random_bool, random_range};
 use image::ImageError;
 use winit::keyboard::KeyCode::{
     ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, KeyB, KeyC, KeyD, KeyF, KeyG, KeyH, KeyK, KeyL, KeyN,
-    KeyO, KeyP, KeyR, KeyS, KeyV, KeyZ, Period, Space, Tab,
+    KeyO, KeyP, KeyR, KeyS, KeyT, KeyV, KeyZ, Period, Space, Tab,
 };
 use winit::keyboard::PhysicalKey;
 use winit::keyboard::PhysicalKey::Code;
@@ -256,6 +256,12 @@ impl Task {
                 self.request_one_rerender = true;
             }
 
+            // Toggle full-speed mode
+            Code(KeyT) => {
+                self.data.enable_full_speed_mode = !self.data.enable_full_speed_mode;
+                self.request_one_rerender = true;
+            }
+
             // Toggle grayscale image
             Code(KeyG) => {
                 self.render.post_proc_cfg.is_grayscale = !self.render.post_proc_cfg.is_grayscale;
@@ -423,6 +429,7 @@ Toggle render timer: f
 Toggle grayscale: g
 Toggle galvanize: v
 Toggle full-search: n
+Toggle full-speed: t
 Reset roll offsets: k
 Step one frame: period
 Save image: s
@@ -453,6 +460,7 @@ pub struct WorkData {
     enable_full_search: bool,
     enable_profile_mode: bool,
     enable_galvanized_mode: bool,
+    enable_full_speed_mode: bool,
     num_steal_per_iter: usize,
     out_visited: Visited2D,
     src_visited: Visited2D,
@@ -481,6 +489,7 @@ impl WorkData {
             enable_full_search: enable_full_search,
             enable_profile_mode: enable_profile_mode,
             enable_galvanized_mode: enable_galvanized_mode,
+            enable_full_speed_mode: false,
             num_steal_per_iter: initial_num_pixel_steal.max(1),
             is_done: false,
             out_visited: Visited2D::new(output_wh),
@@ -547,10 +556,13 @@ impl WorkData {
         */
 
         // Feedback for blank screen & make sure we take all pixels
+        let mut num_steal_per_iter = self.num_steal_per_iter;
         if self.enable_profile_mode {
-            self.num_steal_per_iter = self.out_wh.0 * self.out_wh.1;
+            num_steal_per_iter = self.out_wh.0 * self.out_wh.1;
             println!("");
             println!("Beginning work...");
+        } else if self.enable_full_speed_mode {
+            num_steal_per_iter = self.out_wh.0 * self.out_wh.1;
         }
 
         // Set up re-usable memory for dynamic neighbor data
@@ -618,7 +630,7 @@ impl WorkData {
             if let Some(next_src_sample) = try_next_src_sample {
                 self.record_samples(next_out_sample, next_src_sample);
                 iter_count += 1;
-                if iter_count > self.num_steal_per_iter {
+                if iter_count > num_steal_per_iter {
                     break;
                 }
             } else {
