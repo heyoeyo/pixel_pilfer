@@ -33,17 +33,168 @@ impl PostProcessConfig {
     }
 }
 
+#[derive(Copy, Clone)]
+struct ThreadSharablePointer {
+    /*
+    This is a special wrapper used for writing image pixel data (e.g. array of u8).
+    It's needed purely to allow for writing to pixel data across threads in a way which is 'unsafe'.
+    For example, the built-in image type does not allow for 'chunking columns' the way it does for rows,
+    so there's no 'safe' way to write to columns from different threads, even though this can be done safely.
+    */
+    ptr: *mut u8,
+}
+
+unsafe impl Send for ThreadSharablePointer {}
+impl ThreadSharablePointer {
+    pub fn new(pointer: *mut u8) -> Self {
+        return Self { ptr: pointer };
+    }
+    pub unsafe fn write_byte(self, array_index: usize, new_value: u8) {
+        /* Overwrites a single byte (e.g. color channel for image data) at the given array index */
+        unsafe {
+            *self.ptr.add(array_index) = new_value;
+        }
+    }
+}
+
 // --------------------------------------------------------------------------------------------------------------------
 // %% Functions
 
-pub fn normalized_blur(image: &RGBAImageU8, intensity: u8) -> RGBAImageU8 {
-    /* Helper used to perform fast gaussian blur with simplified 0-to-255 intensity control */
-    const MAX_BLUR_SCALE: f32 = 0.1;
-    let sigma_norm = (intensity as f32 / 255.0).powi(2);
-    let (img_w, img_h) = image.dimensions();
-    let max_side_px = img_w.max(img_h) as f32;
-    let sigma_px = (sigma_norm * max_side_px) * MAX_BLUR_SCALE;
-    return imageops::fast_blur(&image, sigma_px);
+pub fn fast_box_blur(
+    inout_image: &mut RGBAImageU8,
+    scratch_image: &mut RGBAImageU8,
+    intensity: u8,
+    num_threads: Option<usize>,
+) {
+    /*
+       Faster (compared to the image-crate) implementation of a box blur.
+       This implementation also writes to image data 'in-place'!
+
+       Note that (somewhat strangely) the (blurred) result is stored in the
+       'inout' argument, but the function also mutates the 'scratch' input.
+       It might be nice to improve the function to not modify it's input in the future...
+
+       This function does a box blur but without a typical 'convolution' approach.
+       It still has an implicit sliding window, but it's represented as a running sum.
+       Each time the window 'shifts' the trailing pixel value is subtracted from the
+       sum, while the incoming pixel value is added. This way we can avoid storing
+       the window data explicitly. This also means the execution time is independent
+       of the blur size/intensity, only depending on the image size.
+    */
+
+    // Sanity check
+    debug_assert!(
+        scratch_image.dimensions() == inout_image.dimensions(),
+        "Box blur error: Mismatched input/scratch image dimensions!"
+    );
+
+    // For convenience
+    let (img_w, img_h) = (inout_image.width() as usize, inout_image.height() as usize);
+    let num_out_pixels = img_w * img_h;
+    let n_threads = num_threads.unwrap_or({
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(DEFAULT_THREAD_COUNT)
+            .clamp(1, num_out_pixels as usize)
+    });
+
+    // Figure out blur intensity (normalized to image size)
+    let min_side = img_w.min(img_h) as f32;
+    let intensity_norm = intensity as f32 / 255.0;
+    let scaled_side_len = (0.5 * (min_side - 1.0) * intensity_norm.powi(2)).round() as usize;
+    let q_size = (1 + 2 * scaled_side_len).max(3);
+    let q_halfsize = (q_size / 2) as usize;
+    debug_assert!(q_size % 2 == 1, "Box blur error, queue size should be odd!");
+
+    // Perform blur in two passes (one horizontal, one vertical)
+    // -> Each pass uses the same logic, but adjusts 'strides' to get correct sampling
+    // -> H-pass works on groups of rows (per thread), v-pass works on groups of columns
+    // -> Requires unsafe write, only for column case, but shared for rows due to re-using the logic
+    for blur_pass in 0..2 {
+        // Figure out sampling pattern for horizontal vs. vertical sampling
+        let is_hpass = blur_pass == 0;
+        let (num_thread_iters, num_pixel_iters, max_thread_iters): (usize, usize, usize);
+        let (stride_per_rowcol, stride_per_pixel): (usize, usize);
+        if is_hpass {
+            let rows_per_thread = (img_h as f32 / n_threads as f32).ceil() as usize;
+            (num_thread_iters, max_thread_iters) = (rows_per_thread, img_h);
+            (stride_per_rowcol, stride_per_pixel) = (img_w, 1);
+            num_pixel_iters = img_w;
+        } else {
+            let cols_per_thread = (img_w as f32 / n_threads as f32).ceil() as usize;
+            (num_thread_iters, max_thread_iters) = (cols_per_thread, img_w);
+            (stride_per_rowcol, stride_per_pixel) = (1, img_w);
+            num_pixel_iters = img_h;
+        }
+
+        // Do blur pass. Basically: for 'rows or columns' { for pixels in row/col { compute averaged pixel value }}
+        let inp_pixels = inout_image.as_raw();
+        let out_shared_ptr = ThreadSharablePointer::new(scratch_image.as_mut_ptr());
+        std::thread::scope(|s| {
+            for thread_idx in 0..n_threads {
+                s.spawn(move || {
+                    // Set up data and read boundaries for the thread
+                    let thread_pxidx_1 = thread_idx * num_thread_iters;
+                    let thread_pxidx_2 = (thread_pxidx_1 + num_thread_iters).min(max_thread_iters);
+                    let out_thread_ptr = out_shared_ptr;
+                    let mut rgba_sums = [0u32; BYTES_PER_PIXEL];
+
+                    // Step along column/row axis (row indices during h-pass, columns during v-pass)
+                    for row_or_col_idx in thread_pxidx_1..thread_pxidx_2 {
+                        // Compute the first 1D pixel coord for the current row/column (depends on pass)
+                        let start_pxidx_offset = row_or_col_idx * stride_per_rowcol;
+
+                        // Fill in initial queue values for the row/column
+                        // -> This is computed as if we 'filled the queue' up to the -1 indexed pixel in the rol/col
+                        // -> This way the first 'step' below is starting on pixel index 0
+                        rgba_sums.fill(0);
+                        for qidx in 0..q_size {
+                            let px_idx = qidx.saturating_sub(q_halfsize + 1) * stride_per_pixel;
+                            let byte_idx = (start_pxidx_offset + px_idx) * BYTES_PER_PIXEL;
+                            for chidx in 0..BYTES_PER_PIXEL {
+                                rgba_sums[chidx] += inp_pixels[byte_idx + chidx] as u32;
+                            }
+                        }
+
+                        // Step along pixel axis (along row during h-pass, along column during v-pass)
+                        for step_idx in 0..num_pixel_iters {
+                            // Figure out which pixel we're writing to (e.g. middle of 'sliding window)
+                            let mid_px_idx = step_idx * stride_per_pixel;
+                            let mid_byte_idx = (start_pxidx_offset + mid_px_idx) * BYTES_PER_PIXEL;
+
+                            // Figure out pixels that are entering/leaving our sliding window area & add to running sum
+                            let new_px_idx = (step_idx + q_halfsize).min(num_pixel_iters - 1) * stride_per_pixel;
+                            let old_px_idx = step_idx.saturating_sub(q_halfsize + 1) * stride_per_pixel;
+                            let new_byte_idx = (start_pxidx_offset + new_px_idx) * BYTES_PER_PIXEL;
+                            let old_byte_idx = (start_pxidx_offset + old_px_idx) * BYTES_PER_PIXEL;
+
+                            // Update output pixel & sum/average per color channel
+                            for chidx in 0..BYTES_PER_PIXEL {
+                                // Update running sum by removing 'old' and adding 'new' pixel values
+                                // -> For example, during h-pass, 'old' is left-most of queue, 'new' is next right-most
+                                let new_ch_val = inp_pixels[new_byte_idx + chidx] as u32;
+                                let old_ch_val = inp_pixels[old_byte_idx + chidx] as u32;
+                                let new_sum = (rgba_sums[chidx] - old_ch_val) + new_ch_val;
+                                rgba_sums[chidx] = new_sum;
+
+                                // Write averaged queue color to output
+                                // -> During vertical pass, threads are not operating on contiguous 'chunks' so unsafe!
+                                let avg_val = (new_sum / q_size as u32) as u8;
+                                unsafe {
+                                    out_thread_ptr.write_byte(mid_byte_idx + chidx, avg_val);
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        // Here we swap where we read/write from
+        // 1st pass: Just wrote to scratch so switching let's us re-use result as input for next pass
+        // 2nd pass: Switching again puts final result back into 'inout' (e.g. two swaps: inout->scratch->inout)
+        std::mem::swap(inout_image, scratch_image);
+    }
 }
 
 pub fn dirty_blur(
@@ -152,8 +303,8 @@ pub fn postprocess_source_image(
         }
     }
     if config.blur > 0 {
-        // TODO: Blur still does an internal memory allocation! Would be nice to blur 'into' existing buffer...
-        copy_pixels(&normalized_blur(output_image, config.blur), output_image);
+        // This writes result back into output, but needs a scratch/working buffer (which will be modified!)
+        fast_box_blur(output_image, scratch_image, config.blur, None);
     }
     if config.dirt > 0 {
         // Write result into scratch and then flip pointers so we're still working with 'output'
