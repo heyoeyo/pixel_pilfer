@@ -2,6 +2,7 @@ pub mod accel_source_search;
 pub mod buffer_helpers;
 pub mod cli;
 pub mod colormaps;
+pub mod ffmpeg;
 pub mod layout;
 pub mod postproc;
 pub mod render_thread;

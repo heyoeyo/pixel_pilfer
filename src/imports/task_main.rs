@@ -8,7 +8,7 @@ use rand::{random_bool, random_range};
 use image::ImageError;
 use winit::keyboard::KeyCode::{
     ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Backspace, Delete, KeyB, KeyC, KeyD, KeyF, KeyG, KeyH, KeyK, KeyL, KeyN,
-    KeyO, KeyP, KeyR, KeyS, KeyT, KeyV, KeyZ, Period, Space, Tab,
+    KeyO, KeyP, KeyR, KeyS, KeyT, KeyV, KeyX, KeyZ, Period, Space, Tab,
 };
 use winit::keyboard::PhysicalKey;
 use winit::keyboard::PhysicalKey::Code;
@@ -22,6 +22,7 @@ use imports::accel_source_search::SourceSearch;
 use imports::buffer_helpers::{copy_pixels, realloc_image_buffer, resize_and_overlay};
 use imports::cli::CliArgs;
 use imports::colormaps::{make_cmap_inferno, make_colormap_lut};
+use imports::ffmpeg::FFMpegWriter;
 use imports::layout::{DisplayLayout, get_hstack_layout, get_solo_layout};
 use imports::postproc::{PostProcessConfig, get_source_wh, postprocess_source_image};
 use imports::state2d::{Visited2D, index_from_xy, random_xy_index};
@@ -38,6 +39,7 @@ pub struct Task {
     */
     data: WorkData,
     render: RenderData,
+    ffmpeg: FFMpegWriter,
 
     enable_animation: bool,
     request_one_rerender: bool,
@@ -63,6 +65,11 @@ impl Task {
             init_src_xy = Some((init_src_xy_arg[0], init_src_xy_arg[1]));
         }
 
+        // Set up saving folders
+        let curr_folder = std::env::current_dir().ok();
+        let save_video_path = curr_folder.clone().map(|p| p.join("saved_videos"));
+        let save_image_path = curr_folder.map(|p| p.join("saved_images"));
+
         // Initialize rendering data
         let out_wh = (args.output_wh[0] as usize, args.output_wh[1] as usize);
         let init_roll_speed = (args.roll_speed_xy[0], args.roll_speed_xy[1]);
@@ -72,8 +79,13 @@ impl Task {
         let src_wh = render_data.store_image(loaded_img, out_wh);
 
         // Compute number of pixels to 'steal' to achieve target running time
+        let fps = args.framerate;
         let num_out_pixels = out_wh.0 * out_wh.1;
-        let num_px_steal = num_out_pixels as f32 / (args.framerate * args.target_steal_time_sec);
+        let num_px_steal = num_out_pixels as f32 / (fps * args.target_steal_time_sec);
+
+        // Set up resources for video recording
+        let total_frames = (fps * args.video_record_time_sec).ceil() as u32;
+        let ffmpeg = FFMpegWriter::new(save_video_path, args.ffmpeg, out_wh, total_frames, fps);
 
         // Initialize working dataset
         let mut work_data = WorkData::new(
@@ -92,13 +104,14 @@ impl Task {
         let mut new_task = Self {
             data: work_data,
             render: render_data,
+            ffmpeg: ffmpeg,
             enable_animation: !pause_on_reset,
             request_one_rerender: true,
             request_one_state_step: false,
             pause_on_reset: pause_on_reset,
             ui_focused: UIControl::Roll,
             date_id: Self::get_new_date_id(),
-            base_save_path: std::env::current_dir().ok().map(|p| p.join("saved_images")),
+            base_save_path: save_image_path,
             source_image_name: "default_pattern".to_string(),
             draw_count: 0,
         };
@@ -169,9 +182,26 @@ impl Task {
                 self.enable_animation = false;
             }
         }
-        self.render.render_display_images(display_buffer, &self.data.thief_data);
+
+        // Render display image
+        let recidx = self.ffmpeg.get_recording_index();
+        self.render
+            .render_display_images(display_buffer, &self.data.thief_data, recidx);
+
+        // Update drawing state
         self.request_one_state_step = false;
         self.draw_count += 1;
+
+        // Record most recent render for video if needed
+        if recidx.is_some() {
+            let is_finished = self.ffmpeg.write_frame(self.render.disp_out_buffer.as_raw());
+            if is_finished {
+                self.ffmpeg.end_capture();
+                self.request_one_rerender = true;
+                self.enable_animation = false;
+                self.render.roll_speed_xy = (0.0, 0.0);
+            }
+        }
     }
 
     pub fn need_redraw(&mut self) -> bool {
@@ -191,6 +221,26 @@ impl Task {
             // Toggle playback
             Code(Space) => {
                 self.enable_animation = !self.enable_animation;
+            }
+
+            // Toggle video recording
+            Code(KeyX) => {
+                if self.ffmpeg.get_recording_index().is_some() {
+                    self.ffmpeg.end_capture();
+                    self.request_one_rerender = true;
+                    self.enable_animation = false;
+                    self.render.roll_speed_xy = (0.0, 0.0);
+                } else {
+                    // Enable video recording. Use roll speed as indicator for how many times to loop on x/y in video
+                    let (src_w, src_h) = self.render.base_src_buffer.dimensions();
+                    let (roll_x, roll_y) = self.render.roll_speed_xy;
+                    let frame_count = self.ffmpeg.total_frames as f32;
+                    let new_x = roll_x * src_w as f32 / frame_count;
+                    let new_y = roll_y * src_h as f32 / frame_count;
+                    self.render.roll_speed_xy = (new_x, new_y);
+                    self.enable_animation = true;
+                    self.ffmpeg.begin_capture(&self.source_image_name);
+                }
             }
 
             // Step animation forward 1 frame
@@ -419,6 +469,7 @@ Toggle grayscale: g
 Toggle galvanize: v
 Toggle full-search: n
 Toggle full-speed: t
+Toggle video recording: x
 Reset roll offsets: k
 Step one frame: period
 Save image: s
@@ -770,16 +821,25 @@ impl RenderData {
         return self;
     }
 
-    pub fn render_display_images(&mut self, display_buffer: &mut RGBAImageU8, thief_data: &ThiefData) {
+    pub fn render_display_images(
+        &mut self,
+        display_buffer: &mut RGBAImageU8,
+        thief_data: &ThiefData,
+        record_fidx_total: Option<(u32, u32)>,
+    ) {
+        /* Draws the current display (output + source image) into the given display buffer  */
+
         // Start a timer to keep track of total render time
         let render_timer = Instant::now();
 
-        // Render output image on it's own (at full resolution)
+        // Handle roll offsets
         let (src_w, src_h) = self.disp_src_buffer.dimensions();
         if self.roll_speed_xy.0 != 0.0 || self.roll_speed_xy.1 != 0.0 {
             self.roll_offset_xy.0 = (self.roll_offset_xy.0 + self.roll_speed_xy.0) % src_w as f32;
             self.roll_offset_xy.1 = (self.roll_offset_xy.1 + self.roll_speed_xy.1) % src_h as f32;
         }
+
+        // Render output image on it's own (at full resolution)
         thief_data.render_result(
             &mut self.disp_out_buffer,
             &self.post_src_buffer,
@@ -874,8 +934,11 @@ impl RenderData {
             }
         }
 
-        // Draw top-left indicator showing time needed to draw frame
-        if self.enable_render_timer {
+        // Draw text indicator in top left of frame as needed
+        if let Some((video_fidx, video_total_frames)) = record_fidx_total {
+            wtxtdraw!(self.txtdraw, "Record: {} / {}", video_fidx, video_total_frames);
+            self.txtdraw.xy_px(display_buffer, (5, 5));
+        } else if self.enable_render_timer {
             let time_us = render_timer.elapsed().as_micros();
             wtxtdraw!(self.txtdraw, "{} us", time_us);
             self.txtdraw.xy_px(display_buffer, (5, 5));

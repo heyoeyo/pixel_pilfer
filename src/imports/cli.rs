@@ -110,18 +110,24 @@ pub struct CliArgs {
     pub enable_galvanized_mode: bool,
 
     #[arg(
-        long = "debug_profiling",
-        help = "Compute full mapping without render updates and print timing. Used for debugging/profiling"
-    )]
-    pub debug_profiling: bool,
-
-    #[arg(
         short = 't',
         long = "time_sec",
         default_value_t = 8.0,
         help = "Target amount of time to finish stealing all pixels (limited by CPU power)"
     )]
     pub target_steal_time_sec: f32,
+
+    #[arg(long = "video_sec", default_value_t = 10.0, help = "Length of recorded video files")]
+    pub video_record_time_sec: f32,
+
+    #[arg(long = "ffmpeg", default_value = None, help = "FFMpeg executable to use for video recording. Only needed if ffmpeg isn't available system wide")]
+    pub ffmpeg: Option<PathBuf>,
+
+    #[arg(
+        long = "debug_profiling",
+        help = "Compute full mapping without render updates and print timing. Used for debugging/profiling"
+    )]
+    pub debug_profiling: bool,
 }
 
 // --------------------------------------------------------------------------------------------------------------------
