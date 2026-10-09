@@ -5,7 +5,8 @@ use rand::random_range;
 use crate::imports;
 use imports::buffer_helpers::{copy_pixels, realloc_image_buffer, resize_and_overlay};
 use imports::cli::CliArgs;
-use imports::types::{BYTES_PER_PIXEL, DEFAULT_THREAD_COUNT, RGBAImageU8, TWO_PI};
+use imports::thread_utils::{get_elements_per_thread, get_num_threads};
+use imports::types::{BYTES_PER_PIXEL, RGBAImageU8, TWO_PI};
 
 // --------------------------------------------------------------------------------------------------------------------
 
@@ -88,23 +89,19 @@ pub fn fast_box_blur(
         "Box blur error: Mismatched input/scratch image dimensions!"
     );
 
-    // For convenience
-    let (img_w, img_h) = (inout_image.width() as usize, inout_image.height() as usize);
-    let num_out_pixels = img_w * img_h;
-    let n_threads = num_threads.unwrap_or({
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(DEFAULT_THREAD_COUNT)
-            .clamp(1, num_out_pixels as usize)
-    });
-
     // Figure out blur intensity (normalized to image size)
+    let (img_w, img_h) = (inout_image.width() as usize, inout_image.height() as usize);
     let min_side = img_w.min(img_h) as f32;
     let intensity_norm = intensity as f32 / 255.0;
     let scaled_side_len = (0.5 * (min_side - 1.0) * intensity_norm.powi(2)).round() as usize;
     let q_size = (1 + 2 * scaled_side_len).max(3);
     let q_halfsize = (q_size / 2) as usize;
     debug_assert!(q_size % 2 == 1, "Box blur error, queue size should be odd!");
+
+    // Pre-compute threading setups
+    let n_threads = get_num_threads(num_threads, min_side as u32);
+    let rows_per_thread = get_elements_per_thread(img_h as u32, Some(n_threads));
+    let cols_per_thread = get_elements_per_thread(img_w as u32, Some(n_threads));
 
     // Perform blur in two passes (one horizontal, one vertical)
     // -> Each pass uses the same logic, but adjusts 'strides' to get correct sampling
@@ -116,12 +113,10 @@ pub fn fast_box_blur(
         let (num_thread_iters, num_pixel_iters, max_thread_iters): (usize, usize, usize);
         let (stride_per_rowcol, stride_per_pixel): (usize, usize);
         if is_hpass {
-            let rows_per_thread = (img_h as f32 / n_threads as f32).ceil() as usize;
             (num_thread_iters, max_thread_iters) = (rows_per_thread, img_h);
             (stride_per_rowcol, stride_per_pixel) = (img_w, 1);
             num_pixel_iters = img_w;
         } else {
-            let cols_per_thread = (img_w as f32 / n_threads as f32).ceil() as usize;
             (num_thread_iters, max_thread_iters) = (cols_per_thread, img_w);
             (stride_per_rowcol, stride_per_pixel) = (1, img_w);
             num_pixel_iters = img_h;
@@ -217,19 +212,10 @@ pub fn dirty_blur(
     let (img_w, img_h) = input_image.dimensions();
     let (max_x, max_y) = (img_w as i32 - 1, img_h as i32 - 1);
     let radius_px = (intensity as f32 / 255.0).powi(2) * 0.5 * img_w.max(img_h) as f32;
-    let num_out_pixels = (img_w * img_h) as usize;
-
-    // Figure out how many threads to use
-    let n_threads = num_threads.unwrap_or({
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(DEFAULT_THREAD_COUNT)
-            .clamp(1, num_out_pixels)
-    });
-    let px_per_thread = ((num_out_pixels as f32) / (n_threads as f32)).ceil().max(1.0) as usize;
-    let bytes_per_thread = px_per_thread * BYTES_PER_PIXEL;
 
     // Split image into separate blocks of pixels, handled by separate threads
+    let px_per_thread = get_elements_per_thread(img_w * img_h, num_threads);
+    let bytes_per_thread = px_per_thread * BYTES_PER_PIXEL;
     let in_pixels = input_image.as_raw();
     let out_pixels = output_image.as_mut();
     std::thread::scope(|s| {

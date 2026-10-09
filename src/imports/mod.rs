@@ -11,5 +11,6 @@ pub mod state2d;
 pub mod task_main;
 pub mod text;
 pub mod thief_data;
+pub mod thread_utils;
 pub mod types;
 pub mod window_thread;

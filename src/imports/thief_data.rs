@@ -1,6 +1,7 @@
 use crate::imports;
 use imports::state2d::{State2D, xy_from_index, xy_from_index_u32};
-use imports::types::{BYTES_PER_PIXEL, Colormap, DEFAULT_THREAD_COUNT, RGBAImageU8};
+use imports::thread_utils::get_elements_per_thread;
+use imports::types::{BYTES_PER_PIXEL, Colormap, RGBAImageU8};
 
 // --------------------------------------------------------------------------------------------------------------------
 // %% Structs
@@ -120,7 +121,7 @@ impl ThiefData {
         };
 
         // Break output into equal sized chunks per thread
-        let px_per_thread = get_pixels_per_thread_evenly(out_w * out_h, num_threads);
+        let px_per_thread = get_elements_per_thread(out_w * out_h, num_threads);
         let bytes_per_thread = px_per_thread * BYTES_PER_PIXEL;
         let src_pixel_data = source_image.as_raw();
         std::thread::scope(|s| {
@@ -178,7 +179,7 @@ impl ThiefData {
         let src_stride = src_w as u32;
 
         // Break output into equal sized chunks per thread
-        let px_per_thread = get_pixels_per_thread_evenly(out_w * out_h, num_threads);
+        let px_per_thread = get_elements_per_thread(out_w * out_h, num_threads);
         let bytes_per_thread = px_per_thread * BYTES_PER_PIXEL;
         let src_pixel_data = source_image.as_raw();
         std::thread::scope(|s| {
@@ -275,19 +276,4 @@ impl ThiefOverlay {
         // Record last index for next call (we skip previously drawn points)
         self.last_iter_idx = iteration_count;
     }
-}
-
-fn get_pixels_per_thread_evenly(num_pixels: u32, num_threads: Option<usize>) -> usize {
-    /* Helper used to get the largest/evenly sized chunks per thread */
-
-    // Figure out how many threads to use & how many pixels to process per thread
-    let n_threads = num_threads.unwrap_or({
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(DEFAULT_THREAD_COUNT)
-            .clamp(1, num_pixels as usize)
-    });
-    let px_per_thread = ((num_pixels as f32) / (n_threads as f32)).ceil().max(1.0) as usize;
-
-    return px_per_thread;
 }

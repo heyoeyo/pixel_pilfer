@@ -1,5 +1,6 @@
-use crate::imports::types;
-use types::{BYTES_PER_PIXEL, DEFAULT_THREAD_COUNT, RGBAImageU8};
+use crate::imports;
+use imports::thread_utils::get_elements_per_thread;
+use imports::types::{BYTES_PER_PIXEL, RGBAImageU8};
 
 // --------------------------------------------------------------------------------------------------------------------
 // Functions
@@ -102,13 +103,7 @@ pub fn resize_and_overlay(
         .collect();
 
     // Figure out threading setup
-    let n_threads = num_threads.unwrap_or({
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(DEFAULT_THREAD_COUNT)
-            .clamp(1, num_rows_to_copy)
-    });
-    let rows_per_thread = (num_rows_to_copy as f32 / n_threads as f32).ceil() as usize;
+    let rows_per_thread = get_elements_per_thread(num_rows_to_copy as u32, num_threads);
     let out_bytes_per_row = out_w * BYTES_PER_PIXEL;
     let bytes_per_thread = out_bytes_per_row * rows_per_thread;
 
