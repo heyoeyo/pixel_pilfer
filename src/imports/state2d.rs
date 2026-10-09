@@ -56,6 +56,10 @@ where
         return (self.width, self.height);
     }
 
+    pub fn get_slice(&self, point_index: pidx, length: usize) -> &[T] {
+        return &self.state[point_index..(point_index + length)];
+    }
+
     #[allow(unused)]
     pub fn iter_xy(&self) -> impl Iterator<Item = (usize, usize, &T)> {
         /*  Meant to use in a for loop like: for (x_idx, y_idx, state_value) { ... } */

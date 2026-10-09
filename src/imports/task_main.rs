@@ -235,8 +235,8 @@ impl Task {
                     let (src_w, src_h) = self.render.base_src_buffer.dimensions();
                     let (roll_x, roll_y) = self.render.roll_speed_xy;
                     let frame_count = self.ffmpeg.total_frames as f32;
-                    let new_x = roll_x * src_w as f32 / frame_count;
-                    let new_y = roll_y * src_h as f32 / frame_count;
+                    let new_x = roll_x.round() * src_w as f32 / frame_count;
+                    let new_y = roll_y.round() * src_h as f32 / frame_count;
                     self.render.roll_speed_xy = (new_x, new_y);
                     self.enable_animation = true;
                     self.ffmpeg.begin_capture(&self.source_image_name);
@@ -840,10 +840,12 @@ impl RenderData {
         }
 
         // Render output image on it's own (at full resolution)
+        let use_nearest_sampling = record_fidx_total.is_none();
         thief_data.render_result(
             &mut self.disp_out_buffer,
             &self.post_src_buffer,
             self.roll_offset_xy,
+            use_nearest_sampling,
             None,
         );
 
@@ -903,7 +905,7 @@ impl RenderData {
                         UIControl::Pixelate => wtxtdraw!(self.txtdraw, "Pixelate: {}", self.post_proc_cfg.pixelate),
                         UIControl::Roll => wtxtdraw!(
                             self.txtdraw,
-                            "Roll speed: {}, {}",
+                            "Roll speed: {:.2}, {:.2}",
                             self.roll_speed_xy.0,
                             self.roll_speed_xy.1
                         ),
