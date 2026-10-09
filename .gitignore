@@ -1,5 +1,12 @@
-target/
-**/_*
-saved_images/
+
+# Intentionally hidden stuff
 ignore/
+**/_*
 TODOs.txt
+
+# Heavy image/video outputs
+saved_images/
+saved_videos/
+
+# Ignore debug/release artifacts
+target/
