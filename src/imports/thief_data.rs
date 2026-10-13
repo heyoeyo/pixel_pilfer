@@ -162,20 +162,12 @@ impl ThiefData {
 
         // Figure out (positive-only) xy offsets
         let (offset_x_f32, offset_y_f32) = roll_offset_xy;
-        let (off_x0, off_x1) = if offset_x_f32 >= 0.0 {
-            (offset_x_f32.floor() as u32, offset_x_f32.ceil() as u32)
-        } else {
-            // Wrap offsets around to 0-to-src_w range. Note for negative number ceil rounds away from zero!
-            let upper = src_w - offset_x_f32.abs().floor() as u32;
-            (upper, upper - 1)
-        };
-        let (off_y0, off_y1) = if offset_y_f32 >= 0.0 {
-            (offset_y_f32.floor() as u32, offset_y_f32.ceil() as u32)
-        } else {
-            let lower = src_h - offset_y_f32.abs().ceil() as u32;
-            (lower, lower + 1)
-        };
-        let (fract_x, fract_y) = (offset_x_f32.abs().fract(), offset_y_f32.abs().fract());
+        let off_x0 = (offset_x_f32 + src_w as f32).floor() as u32 % src_w;
+        let off_y0 = (offset_y_f32 + src_h as f32).floor() as u32 % src_h;
+        let off_x1 = (off_x0 + 1) % src_w;
+        let off_y1 = (off_y0 + 1) % src_h;
+        let fract_x = (1.0 + offset_x_f32.fract()) % 1.0;
+        let fract_y = (1.0 + offset_y_f32.fract()) % 1.0;
         let src_stride = src_w as u32;
 
         // Break output into equal sized chunks per thread
