@@ -1,6 +1,13 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::time::Instant;
+
+use crate::imports;
+use imports::buffer_helpers::resize_and_overlay;
+use imports::types::RGBAImageU8;
+
+// --------------------------------------------------------------------------------------------------------------------
 
 #[cfg(target_os = "windows")]
 const DEFAULT_FFMPEG_EXEC: &str = "ffmpeg.exe";
@@ -8,14 +15,20 @@ const DEFAULT_FFMPEG_EXEC: &str = "ffmpeg.exe";
 #[cfg(not(target_os = "windows"))]
 const DEFAULT_FFMPEG_EXEC: &str = "ffmpeg";
 
+// --------------------------------------------------------------------------------------------------------------------
+// Structs
+
 pub struct FFMpegWriter {
     exec_path: PathBuf,
     wh_str: String,
     fps_str: String,
+    needs_scaling: bool,
+    render_buffer: RGBAImageU8,
     proc: Option<Child>,
     stdin: Option<ChildStdin>,
     pub total_frames: u32,
     curr_fidx: u32,
+    capture_timer: Instant,
     save_idx: u32,
     save_folder: Option<PathBuf>,
 }
@@ -24,19 +37,35 @@ impl FFMpegWriter {
     pub fn new(
         save_folder_path: Option<PathBuf>,
         ffmpeg_exec: Option<PathBuf>,
-        output_wh: (usize, usize),
+        frame_wh: (usize, usize),
+        render_wh: Option<(usize, usize)>,
         total_frames: u32,
         framerate: f32,
     ) -> Self {
+        // Handle case where recording size is different from frame size
+        let mut needs_scaling = false;
+        let mut record_wh = frame_wh;
+        let mut render_buffer = RGBAImageU8::new(0, 0);
+        if let Some(render_wh) = render_wh {
+            record_wh = render_wh;
+            needs_scaling = frame_wh.0 != render_wh.0 || frame_wh.1 != render_wh.1;
+            if needs_scaling {
+                render_buffer = RGBAImageU8::new(record_wh.0 as u32, record_wh.1 as u32);
+            }
+        }
+
         return Self {
             exec_path: ffmpeg_exec.unwrap_or(PathBuf::from(DEFAULT_FFMPEG_EXEC)),
-            wh_str: format!("{}x{}", output_wh.0, output_wh.1),
+            wh_str: format!("{}x{}", record_wh.0, record_wh.1),
             fps_str: format!("{}", framerate),
+            render_buffer: render_buffer,
+            needs_scaling: needs_scaling,
             proc: None,
             stdin: None,
             total_frames: total_frames,
             curr_fidx: 0,
             save_idx: 0,
+            capture_timer: Instant::now(),
             save_folder: save_folder_path,
         };
     }
@@ -125,14 +154,22 @@ impl FFMpegWriter {
         self.stdin = stdin;
         self.curr_fidx = 0;
         self.save_idx += 1;
+        self.capture_timer = Instant::now();
     }
 
-    pub fn write_frame(&mut self, frame: &[u8]) -> bool {
+    pub fn write_frame(&mut self, frame: &RGBAImageU8) -> bool {
         /* Write frame data direct to ffmpeg process. Returns: is_finished */
 
         if let Some(ffmpeg_stdin) = &mut self.stdin {
+            let frame_bytes = if self.needs_scaling {
+                let render_wh = self.render_buffer.dimensions();
+                resize_and_overlay(&mut self.render_buffer, &frame, (0, 0), render_wh, None);
+                self.render_buffer.as_raw()
+            } else {
+                frame.as_raw()
+            };
             ffmpeg_stdin
-                .write_all(frame)
+                .write_all(frame_bytes)
                 .expect("Error writing frame data! Bad ffmpeg command?");
             self.curr_fidx += 1;
 
@@ -158,7 +195,10 @@ impl FFMpegWriter {
             if !status.success() {
                 eprintln!("Error! FFMpeg was unable to exit cleanly: {}", status);
             }
-            println!("Ended ffmpeg capture!");
+            println!(
+                "Ended ffmpeg capture! Took {:.1} mins",
+                self.capture_timer.elapsed().as_secs() as f32 / 60.0,
+            );
         }
 
         // Reset frame indexing

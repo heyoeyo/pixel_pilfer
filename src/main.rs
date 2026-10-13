@@ -21,7 +21,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(init_disp_wh_vec) = &args.display_wh {
         init_disp_wh = Some((init_disp_wh_vec[0], init_disp_wh_vec[1]));
     } else {
-        init_disp_wh = None;
+        if let Some(video_wh) = &args.video_wh {
+            init_disp_wh = Some((video_wh[0] as u32, video_wh[1] as u32));
+        } else {
+            init_disp_wh = None;
+        }
     }
 
     // Set up main task data (this is where the bulk of the app logic lives)

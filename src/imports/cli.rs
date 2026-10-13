@@ -120,6 +120,13 @@ pub struct CliArgs {
     #[arg(long = "video_sec", default_value_t = 10.0, help = "Length of recorded video files")]
     pub video_record_time_sec: f32,
 
+    #[arg(long = "video_wh",
+    default_value = None,
+    num_args = 2,
+    value_names = ["width", "height"],
+    help = "Resolution of the recorded video. If not provided, video will match output size")]
+    pub video_wh: Option<Vec<usize>>,
+
     #[arg(long = "ffmpeg", default_value = None, help = "FFMpeg executable to use for video recording. Only needed if ffmpeg isn't available system wide")]
     pub ffmpeg: Option<PathBuf>,
 

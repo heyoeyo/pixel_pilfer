@@ -69,6 +69,10 @@ impl Task {
         let curr_folder = std::env::current_dir().ok();
         let save_video_path = curr_folder.clone().map(|p| p.join("saved_videos"));
         let save_image_path = curr_folder.map(|p| p.join("saved_images"));
+        let mut video_wh: Option<(usize, usize)> = None;
+        if let Some(video_wh_vec) = args.video_wh.clone() {
+            video_wh = Some((video_wh_vec[0], video_wh_vec[1]));
+        }
 
         // Initialize rendering data
         let out_wh = (args.output_wh[0] as usize, args.output_wh[1] as usize);
@@ -85,7 +89,7 @@ impl Task {
 
         // Set up resources for video recording
         let total_frames = (fps * args.video_record_time_sec).ceil() as u32;
-        let ffmpeg = FFMpegWriter::new(save_video_path, args.ffmpeg, out_wh, total_frames, fps);
+        let ffmpeg = FFMpegWriter::new(save_video_path, args.ffmpeg, out_wh, video_wh, total_frames, fps);
 
         // Initialize working dataset
         let mut work_data = WorkData::new(
@@ -194,7 +198,7 @@ impl Task {
 
         // Record most recent render for video if needed
         if recidx.is_some() {
-            let is_finished = self.ffmpeg.write_frame(self.render.disp_out_buffer.as_raw());
+            let is_finished = self.ffmpeg.write_frame(&self.render.disp_out_buffer);
             if is_finished {
                 self.ffmpeg.end_capture();
                 self.request_one_rerender = true;
