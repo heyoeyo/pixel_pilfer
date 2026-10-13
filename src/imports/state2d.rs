@@ -57,7 +57,7 @@ where
     }
 
     pub fn get_slice(&self, point_index: pidx, length: usize) -> &[T] {
-        return &self.state[point_index..(point_index + length)];
+        return &self.state[point_index..(point_index + length).min(self.state.len())];
     }
 
     #[allow(unused)]
