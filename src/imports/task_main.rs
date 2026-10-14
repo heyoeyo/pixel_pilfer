@@ -96,6 +96,7 @@ impl Task {
             out_wh,
             init_out_xy,
             init_src_xy,
+            args.num_init_points,
             !args.disable_full_search,
             args.debug_profiling,
             args.enable_galvanized_mode,
@@ -518,6 +519,7 @@ pub struct WorkData {
     pub thief_data: ThiefData,
     init_out_sample: Option<(f32, f32)>,
     init_src_sample: Option<(f32, f32)>,
+    num_extra_init_pts: u32,
 }
 
 impl WorkData {
@@ -525,6 +527,7 @@ impl WorkData {
         output_wh: (usize, usize),
         initial_output_sample_xy_norm: Option<(f32, f32)>,
         initial_source_sample_xy_norm: Option<(f32, f32)>,
+        num_extra_init_points: u32,
         enable_full_search: bool,
         enable_profile_mode: bool,
         enable_galvanized_mode: bool,
@@ -548,6 +551,7 @@ impl WorkData {
             thief_data: ThiefData::new(output_wh, init_src_wh),
             init_out_sample: initial_output_sample_xy_norm,
             init_src_sample: initial_source_sample_xy_norm,
+            num_extra_init_pts: num_extra_init_points,
         }
     }
 
@@ -592,6 +596,13 @@ impl WorkData {
             init_src_sample = index_from_xy(src_x_px.round() as usize, src_y_px.round() as usize, self.src_wh.0);
         }
         self.record_samples(init_out_sample, init_src_sample);
+
+        // Additional seed points if needed
+        for _ in 0..self.num_extra_init_pts {
+            let extra_out_sample = random_xy_index(self.out_wh.0, self.out_wh.1);
+            let extra_src_sample = random_xy_index(self.src_wh.0, self.src_wh.1);
+            self.record_samples(extra_out_sample, extra_src_sample);
+        }
 
         return self;
     }

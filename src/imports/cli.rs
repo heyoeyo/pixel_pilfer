@@ -92,6 +92,13 @@ pub struct CliArgs {
     )]
     pub source_xy: Option<Vec<f32>>,
 
+    #[arg(
+        long = "num_pts",
+        default_value_t = 0,
+        help = "Number of (additional) random seed points"
+    )]
+    pub num_init_points: u32,
+
     #[arg(short = 'p', long = "pause", help = "Pause the algorithm on startup & on resets")]
     pub pause_on_reset: bool,
 
