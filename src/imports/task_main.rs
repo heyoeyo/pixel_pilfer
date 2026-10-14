@@ -96,7 +96,7 @@ impl Task {
             out_wh,
             init_out_xy,
             init_src_xy,
-            args.enable_full_search,
+            !args.disable_full_search,
             args.debug_profiling,
             args.enable_galvanized_mode,
             num_px_steal.max(1.0).round() as usize,

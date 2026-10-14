@@ -97,10 +97,10 @@ pub struct CliArgs {
 
     #[arg(
         short = 'n',
-        long = "no_cheat",
-        help = "Enables full-search mode. Guarantees that input image pixels are only sampled once at most"
+        long = "no_search",
+        help = "Disables full-search mode. Typically produces more interesting patterns at the cost of some input pixels being sampled more than once"
     )]
-    pub enable_full_search: bool,
+    pub disable_full_search: bool,
 
     #[arg(
         short = 'g',
