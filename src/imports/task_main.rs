@@ -436,7 +436,11 @@ impl Task {
                     }
 
                     // Save the image
-                    let save_name = format!("{}_{}.png", self.data.thief_data.get_iter_count(), self.draw_count);
+                    let save_name = format!(
+                        "{:0>8}_{:0>5}.png",
+                        self.data.thief_data.get_iter_count(),
+                        self.draw_count
+                    );
                     let save_buffer = &self.render.disp_out_buffer;
                     if let Some(save_file_path) = save_folder.join(save_name).to_str() {
                         let res = save_buffer.save(&save_file_path);
