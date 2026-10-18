@@ -51,6 +51,7 @@ pub struct Task {
     date_id: String,
     base_save_path: Option<PathBuf>,
     draw_count: u32,
+    reset_count: u32,
 }
 
 impl Task {
@@ -120,6 +121,7 @@ impl Task {
             base_save_path: save_image_path,
             source_image_name: "default_pattern".to_string(),
             draw_count: 0,
+            reset_count: 0,
         };
 
         // Check if we got an image
@@ -132,8 +134,11 @@ impl Task {
     fn get_new_date_id() -> String {
         /* Helper used to get a timestamp to use for saving (used to distinguish resets) */
         let start_of_2026 = std::time::UNIX_EPOCH + Duration::from_secs(1767225600);
-        let date_id = SystemTime::now().duration_since(start_of_2026).unwrap().as_secs();
-        return format!("{}", date_id);
+        return SystemTime::now()
+            .duration_since(start_of_2026)
+            .unwrap()
+            .as_secs()
+            .to_string();
     }
 
     pub fn load_image(&mut self, image_path: &PathBuf) {
@@ -162,6 +167,10 @@ impl Task {
                 let src_wh = self.render.store_image(img.to_rgba8(), self.data.out_wh);
                 self.data.setup(src_wh);
                 self.source_image_name = src_name_as_str;
+
+                // Reset state for save-naming
+                self.date_id = Self::get_new_date_id();
+                self.reset_count = 0;
 
                 // Trigger re-renders
                 self.request_one_rerender = true;
@@ -250,13 +259,13 @@ impl Task {
 
             // Reset state
             Code(Backspace | Delete) => {
-                self.date_id = Self::get_new_date_id();
                 self.render.roll_offset_xy = (0.0, 0.0);
                 self.data.reset();
                 self.render.clear();
                 self.enable_animation = !self.pause_on_reset;
                 self.request_one_rerender = true;
                 self.draw_count = 0;
+                self.reset_count += 1;
             }
 
             // Cycle display layout
@@ -431,11 +440,7 @@ impl Task {
                     }
 
                     // Save the image
-                    let save_name = format!(
-                        "{:0>8}_{:0>5}.png",
-                        self.data.thief_data.get_iter_count(),
-                        self.draw_count
-                    );
+                    let save_name = format!("{:0>3}_{:0>5}.png", self.reset_count, self.draw_count);
                     let save_buffer = &self.render.disp_out_buffer;
                     if let Some(save_file_path) = save_folder.join(save_name).to_str() {
                         let res = save_buffer.save(&save_file_path);
