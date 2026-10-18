@@ -74,21 +74,24 @@ impl Task {
             video_wh = Some((video_wh_vec[0], video_wh_vec[1]));
         }
 
+        // Set up default pattern (used before user loads an image)
+        let out_wh = (args.output_wh[0] as usize, args.output_wh[1] as usize);
+        let num_out_pixels = out_wh.0 * out_wh.1;
+        let default_side_length = (num_out_pixels as f32 * args.source_rel_scale).sqrt().ceil() as usize;
+        let loaded_img = make_default_image(default_side_length, default_side_length);
+
         // Get frame rate/counts (important for animation/video recording)
         let fps = args.framerate;
         let total_frames = (fps * args.video_record_time_sec).ceil() as u32;
         let roll_scale_factor = 1.0 / total_frames.max(1) as f32;
 
         // Initialize rendering data
-        let out_wh = (args.output_wh[0] as usize, args.output_wh[1] as usize);
         let init_roll_speed = (args.roll_speed_xy[0], args.roll_speed_xy[1]);
-        let loaded_img = make_default_image(800, 800);
         let posproc_cfg = PostProcessConfig::from_cli(&args);
         let mut render_data = RenderData::new(posproc_cfg, init_roll_speed, roll_scale_factor);
         let src_wh = render_data.store_image(loaded_img, out_wh);
 
         // Initialize working dataset
-        let num_out_pixels = out_wh.0 * out_wh.1;
         let num_px_steal = num_out_pixels as f32 / (fps * args.target_steal_time_sec);
         let mut work_data = WorkData::new(
             out_wh,
@@ -964,7 +967,7 @@ impl RenderData {
     }
 }
 
-fn make_default_image(image_w: u32, image_h: u32) -> RGBAImageU8 {
+fn make_default_image(image_w: usize, image_h: usize) -> RGBAImageU8 {
     /* Helper used to make a default image in case nothing is loaded */
 
     // Build simple gradient to use for making a default pattern
@@ -985,7 +988,7 @@ fn make_default_image(image_w: u32, image_h: u32) -> RGBAImageU8 {
     let img_half_wh = (image_w / 2, image_h / 2);
     let twirl_effect_strength = random_range(0.5..2.0) * (2 * random_bool(0.5) as i32 - 1) as f32;
     let repeat_count: i32 = random_range(2..4);
-    let mut out_img = RGBAImageU8::new(image_w, image_h);
+    let mut out_img = RGBAImageU8::new(image_w as u32, image_h as u32);
     for (x, y, pixel) in out_img.enumerate_pixels_mut() {
         let dx = (x as f32 - img_half_wh.0 as f32) / img_half_wh.0 as f32;
         let dy = (y as f32 - img_half_wh.1 as f32) / img_half_wh.1 as f32;
