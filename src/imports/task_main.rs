@@ -74,24 +74,22 @@ impl Task {
             video_wh = Some((video_wh_vec[0], video_wh_vec[1]));
         }
 
+        // Get frame rate/counts (important for animation/video recording)
+        let fps = args.framerate;
+        let total_frames = (fps * args.video_record_time_sec).ceil() as u32;
+        let roll_scale_factor = 1.0 / total_frames.max(1) as f32;
+
         // Initialize rendering data
         let out_wh = (args.output_wh[0] as usize, args.output_wh[1] as usize);
         let init_roll_speed = (args.roll_speed_xy[0], args.roll_speed_xy[1]);
         let loaded_img = make_default_image(800, 800);
         let posproc_cfg = PostProcessConfig::from_cli(&args);
-        let mut render_data = RenderData::new(posproc_cfg, init_roll_speed);
+        let mut render_data = RenderData::new(posproc_cfg, init_roll_speed, roll_scale_factor);
         let src_wh = render_data.store_image(loaded_img, out_wh);
 
-        // Compute number of pixels to 'steal' to achieve target running time
-        let fps = args.framerate;
+        // Initialize working dataset
         let num_out_pixels = out_wh.0 * out_wh.1;
         let num_px_steal = num_out_pixels as f32 / (fps * args.target_steal_time_sec);
-
-        // Set up resources for video recording
-        let total_frames = (fps * args.video_record_time_sec).ceil() as u32;
-        let ffmpeg = FFMpegWriter::new(save_video_path, args.ffmpeg, out_wh, video_wh, total_frames, fps);
-
-        // Initialize working dataset
         let mut work_data = WorkData::new(
             out_wh,
             init_out_xy,
@@ -109,7 +107,7 @@ impl Task {
         let mut new_task = Self {
             data: work_data,
             render: render_data,
-            ffmpeg: ffmpeg,
+            ffmpeg: FFMpegWriter::new(save_video_path, args.ffmpeg, out_wh, video_wh, total_frames, fps),
             enable_animation: !pause_on_reset,
             request_one_rerender: true,
             request_one_state_step: false,
@@ -236,13 +234,6 @@ impl Task {
                     self.enable_animation = false;
                     self.render.roll_speed_xy = (0.0, 0.0);
                 } else {
-                    // Enable video recording. Use roll speed as indicator for how many times to loop on x/y in video
-                    let (src_w, src_h) = self.render.base_src_buffer.dimensions();
-                    let (roll_x, roll_y) = self.render.roll_speed_xy;
-                    let frame_count = self.ffmpeg.total_frames as f32;
-                    let new_x = roll_x.round() * src_w as f32 / frame_count;
-                    let new_y = roll_y.round() * src_h as f32 / frame_count;
-                    self.render.roll_speed_xy = (new_x, new_y);
                     self.enable_animation = true;
                     self.ffmpeg.begin_capture(&self.source_image_name);
                 }
@@ -407,10 +398,10 @@ impl Task {
                     UIControl::Roll => {
                         let arrow_dir_f32 = arrow_dir as f32;
                         if keypress == Code(ArrowLeft) || keypress == Code(ArrowRight) {
-                            self.render.change_roll_speed(Some(0.5 * arrow_dir_f32), None);
+                            self.render.change_roll_speed(Some(0.25 * arrow_dir_f32), None);
                         }
                         if keypress == Code(ArrowDown) || keypress == Code(ArrowUp) {
-                            self.render.change_roll_speed(None, Some(0.5 * arrow_dir_f32));
+                            self.render.change_roll_speed(None, Some(0.25 * arrow_dir_f32));
                         }
                         self.enable_animation |= self.render.has_roll_speed() && !self.pause_on_reset;
                         needs_post_proc = false;
@@ -737,12 +728,14 @@ pub struct RenderData {
     image_name: String,
     roll_speed_xy: (f32, f32),
     roll_offset_xy: (f32, f32),
+    roll_scale: f32,
+
     layout_state: DisplayLayout,
     enable_render_timer: bool,
 }
 
 impl RenderData {
-    pub fn new(post_process_config: PostProcessConfig, initial_roll_speed: (f32, f32)) -> Self {
+    pub fn new(post_process_config: PostProcessConfig, initial_roll_speed: (f32, f32), roll_scale_factor: f32) -> Self {
         // Make dummy starter data
         let empty_img = RGBAImageU8::new(0, 0);
 
@@ -759,6 +752,7 @@ impl RenderData {
             image_name: "Default Pattern".to_string(),
             roll_speed_xy: initial_roll_speed,
             roll_offset_xy: (0.0, 0.0),
+            roll_scale: roll_scale_factor,
             layout_state: DisplayLayout::HStack,
             enable_render_timer: false,
         }
@@ -854,8 +848,11 @@ impl RenderData {
         // Handle roll offsets
         let (src_w, src_h) = self.disp_src_buffer.dimensions();
         if self.roll_speed_xy.0 != 0.0 || self.roll_speed_xy.1 != 0.0 {
-            self.roll_offset_xy.0 = (self.roll_offset_xy.0 + self.roll_speed_xy.0) % src_w as f32;
-            self.roll_offset_xy.1 = (self.roll_offset_xy.1 + self.roll_speed_xy.1) % src_h as f32;
+            let (src_w_f32, src_h_f32) = (src_w as f32, src_h as f32);
+            let roll_x_px = self.roll_speed_xy.0 * src_w_f32 * self.roll_scale;
+            let roll_y_px = self.roll_speed_xy.1 * src_h_f32 * self.roll_scale;
+            self.roll_offset_xy.0 = (self.roll_offset_xy.0 + roll_x_px) % src_w_f32;
+            self.roll_offset_xy.1 = (self.roll_offset_xy.1 + roll_y_px) % src_h_f32;
         }
 
         // Render output image on it's own (at full resolution)
